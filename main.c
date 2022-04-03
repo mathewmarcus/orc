@@ -34,9 +34,8 @@
 int main(int argc, char *argv[])
 {
     FILE *handle;
-    uint8_t elf_header[sizeof(Elf32_Ehdr)], program_header[sizeof(Elf32_Phdr)];
-    Elf32_Ehdr *elf_header_ptr = (Elf32_Ehdr *)elf_header;
-    Elf32_Phdr *program_header_ptr = (Elf32_Phdr *)program_header;
+    Elf32_Ehdr elf_header;
+    Elf32_Phdr program_header;
 
     if (argc < 2)
     {
@@ -50,7 +49,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (fread(elf_header, 1, sizeof(Elf32_Ehdr), handle) != sizeof(Elf32_Ehdr))
+    if (fread(&elf_header, sizeof(Elf32_Ehdr), 1, handle) != 1)
     {
         if (ferror(handle))
             fprintf(stderr, "Failed to read ELF header from %s\n", argv[1]);
@@ -62,8 +61,8 @@ int main(int argc, char *argv[])
     }
 
     /* parse program header info */
-    Elf32_Half ph_num = be16toh(elf_header_ptr->e_phnum), ph_size = be16toh(elf_header_ptr->e_phentsize);
-    Elf32_Off ph_off = be32toh(elf_header_ptr->e_phoff);
+    Elf32_Half ph_num = be16toh(elf_header.e_phnum), ph_size = be16toh(elf_header.e_phentsize);
+    Elf32_Off ph_off = be32toh(elf_header.e_phoff);
     fprintf(stderr, "Found %hu program headers of size %hu at offset %u\n", ph_num, ph_size, ph_off);
 
     if (fseek(handle, ph_off, SEEK_SET) == -1)
@@ -76,7 +75,7 @@ int main(int argc, char *argv[])
     /* get dynamic segment */
     for (Elf32_Half i = 0; i < ph_num; i++)
     {
-        if (fread(program_header, 1, sizeof(Elf32_Phdr), handle) != sizeof(Elf32_Phdr))
+        if (fread(&program_header, 1, sizeof(Elf32_Phdr), handle) != sizeof(Elf32_Phdr))
         {
             if (ferror(handle))
                 fprintf(stderr, "Failed to read program header %hu from %s\n", i, argv[1]);
@@ -87,29 +86,32 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        program_header_ptr->p_type = be32toh(program_header_ptr->p_type);
-        if (program_header_ptr->p_type == PT_DYNAMIC)
+        program_header.p_type = be32toh(program_header.p_type);
+        if (program_header.p_type == PT_DYNAMIC)
             break;
     }
 
-    if (program_header_ptr->p_type != PT_DYNAMIC)
+    if (program_header.p_type != PT_DYNAMIC)
     {
         fprintf(stderr, "Failed to find DYNAMIC program header in %s\n", argv[1]);
         return 1;
     }
 
-    program_header_ptr->p_offset = be32toh(program_header_ptr->p_offset);
-    program_header_ptr->p_vaddr = be32toh(program_header_ptr->p_vaddr);
-    program_header_ptr->p_paddr = be32toh(program_header_ptr->p_paddr);
-    program_header_ptr->p_filesz = be32toh(program_header_ptr->p_filesz);
-    program_header_ptr->p_memsz = be32toh(program_header_ptr->p_memsz);
+    program_header.p_offset = be32toh(program_header.p_offset);
+    program_header.p_vaddr = be32toh(program_header.p_vaddr);
+    program_header.p_paddr = be32toh(program_header.p_paddr);
+    program_header.p_filesz = be32toh(program_header.p_filesz);
+    program_header.p_memsz = be32toh(program_header.p_memsz);
     fprintf(stderr, "Found DYNAMIC segment:\n\tOffset: 0x%x\n\tVirtualAddress: 0x%x\n\tPhysicalAddress: 0x%x\n\tFileSize: 0x%x\n\tMemorySize: 0x%x\n",
-            program_header_ptr->p_offset,
-            program_header_ptr->p_vaddr,
-            program_header_ptr->p_paddr,
-            program_header_ptr->p_filesz,
-            program_header_ptr->p_memsz);
+            program_header.p_offset,
+            program_header.p_vaddr,
+            program_header.p_paddr,
+            program_header.p_filesz,
+            program_header.p_memsz);
 
+    
+
+    //exit(0);
     /*
         build section headers
      */
@@ -182,10 +184,10 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    elf_header_ptr->e_shentsize = htobe16(sizeof(Elf32_Shdr));
-    elf_header_ptr->e_shnum = htobe16(2);
-    elf_header_ptr->e_shoff = htobe32(file_size + shstrtab_offset + be32toh(shstrtab_header.sh_size) + sh_offset);
-    elf_header_ptr->e_shstrndx = htobe16(1);
+    elf_header.e_shentsize = htobe16(sizeof(Elf32_Shdr));
+    elf_header.e_shnum = htobe16(2);
+    elf_header.e_shoff = htobe32(file_size + shstrtab_offset + be32toh(shstrtab_header.sh_size) + sh_offset);
+    elf_header.e_shstrndx = htobe16(1);
 
     if (fseek(handle, 0, SEEK_SET) == -1 ) {
         fprintf(stderr, "Failed to seek to beginning of %s: %s\n", argv[1], strerror(errno));
@@ -193,7 +195,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (fwrite(elf_header, sizeof(Elf32_Ehdr), 1, handle) != 1) {
+    if (fwrite(&elf_header, sizeof(Elf32_Ehdr), 1, handle) != 1) {
         fprintf(stderr, "Failed to write updated ELF header to %s\n", argv[1]);
         fclose(handle);
         return 1;
