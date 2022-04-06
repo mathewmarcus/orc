@@ -86,6 +86,11 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    if (elf_header.e_shoff || elf_header.e_shnum) {
+        fprintf(stderr, "%s already contains %hu section headers at offset 0x%x\n", argv[1], be16toh(elf_header.e_shnum), be32toh(elf_header.e_shoff));
+        goto err_exit;
+    }
+
     /* parse program header info */
     Elf32_Half ph_num = be16toh(elf_header.e_phnum), ph_size = be16toh(elf_header.e_phentsize);
     Elf32_Off ph_off = be32toh(elf_header.e_phoff);
