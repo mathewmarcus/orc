@@ -33,7 +33,7 @@
 
 struct section_info {
    Elf32_Shdr *headers;
-   uint32_t num_headers;
+   Elf32_Half num_headers;
 
    uint8_t *shstrtab;
    size_t shstrtab_len;
@@ -57,7 +57,11 @@ int main(int argc, char *argv[])
     FILE *handle;
     Elf32_Ehdr elf_header;
     Elf32_Phdr program_header;
+    Elf32_Shdr null_section = { 0 };
+    long file_size, shstrtab_offset = 0, sh_offset = 0;
     int ret;
+    enum ORCError err;
+    struct section_info s_info = { 0 };
 
     if (argc < 2)
     {
@@ -94,6 +98,9 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    if (add_section_header(&s_info, "", &null_section) != ORC_SUCCESS)
+       goto err_exit;
+
     /* get dynamic segment */
     for (Elf32_Half i = 0; i < ph_num; i++)
     {
@@ -108,98 +115,67 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        program_header.p_type = be32toh(program_header.p_type);
-        if (program_header.p_type == PT_DYNAMIC)
-            break;
+        switch (be32toh(program_header.p_type)) {
+            case PT_DYNAMIC:
+                if ((err = parse_dynamic_segment(handle, &program_header, &s_info)) == ORC_CRITICIAL)
+                    goto err_exit;
+                break;
+            default:
+                break;
+        }
     }
 
-    if (program_header.p_type != PT_DYNAMIC)
-    {
-        fprintf(stderr, "Failed to find DYNAMIC program header in %s\n", argv[1]);
-        return 1;
-    }
-
-    // program_header.p_offset = be32toh(program_header.p_offset);
-    // program_header.p_vaddr = be32toh(program_header.p_vaddr);
-    // program_header.p_paddr = be32toh(program_header.p_paddr);
-    // program_header.p_filesz = be32toh(program_header.p_filesz);
-    // program_header.p_memsz = be32toh(program_header.p_memsz);
-    // fprintf(stderr, "Found DYNAMIC segment:\n\tOffset: 0x%x\n\tVirtualAddress: 0x%x\n\tPhysicalAddress: 0x%x\n\tFileSize: 0x%x\n\tMemorySize: 0x%x\nTagCount: %lu\n",
-    //         program_header.p_offset,
-    //         program_header.p_vaddr,
-    //         program_header.p_paddr,
-    //         program_header.p_filesz,
-    //         program_header.p_memsz,
-    //         program_header.p_filesz/sizeof(Elf32_Dyn));
-
-    /*
-        initial vars
-    */
-   struct section_info s_info = { 0 };
-   Elf32_Shdr null_section = { 0 };
-   /* uint8_t shstrtab[] = {'\0', '.', 's', 'h', 's', 't', 'r', 't', 'a', 'b', '\0'}; */
-   if (add_section_header(&s_info, "", &null_section) != ORC_SUCCESS) {
-       fprintf(stderr, "Failed to add null section header\n");
-       goto err;
-   }
-    
-    /*
-        Parse DYNAMIC segment
-    */
-   parse_dynamic_segment(handle, &program_header, &s_info);
-
-    exit(0);
-    /*
-        build section headers.p_offset, program_header.p_filesz
-     */
-    int file_size, shstrtab_offset = 0, sh_offset = 0;
     if (fseek(handle, 0L, SEEK_END) == -1 || (file_size = ftell(handle)) == -1)
     {
         fprintf(stderr, "Failed to obtain file size of %s: %s\n", argv[1], strerror(errno));
         fclose(handle);
         return 1;
     }
-    fprintf(stderr, "File %s size: %i bytes\n", argv[1], file_size);
+    fprintf(stderr, "File %s size: %li bytes\n", argv[1], file_size);
 
     if (file_size % 32)
     {
         shstrtab_offset = 32 - (file_size % 32);
         if (fseek(handle, shstrtab_offset, SEEK_CUR) == -1)
         {
-            fprintf(stderr, "Failed to seek to .shstrtab offset at %i in %s: %s\n", file_size + shstrtab_offset, argv[1], strerror(errno));
+            fprintf(stderr, "Failed to seek to .shstrtab offset at %li in %s: %s\n", file_size + shstrtab_offset, argv[1], strerror(errno));
             fclose(handle);
             return 1;
         }
     }
-    fprintf(stderr, ".shstrtab offset: %i\n", file_size + shstrtab_offset);
+    fprintf(stderr, ".shstrtab offset: %li\n", file_size + shstrtab_offset);
 
     /*
     .shstrtab
     */
-    Elf32_Shdr shstrtab_header = {0}, null_header = {0};
-    shstrtab_header.sh_name = htobe32(1);
+    Elf32_Shdr shstrtab_header = {0};
+    shstrtab_header.sh_name = htobe32(s_info.num_headers - 1);
     shstrtab_header.sh_type = htobe32(SHT_STRTAB);
     shstrtab_header.sh_offset = htobe32(file_size + shstrtab_offset);
-    shstrtab_header.sh_size = htobe32(11);
+    shstrtab_header.sh_size = htobe32(s_info.shstrtab_len + strlen(".shstrtab") + 1); /* plus terminating \0 */
     shstrtab_header.sh_addralign = htobe32(1);
 
-/*     if (fwrite(shstrtab, be32toh(shstrtab_header.sh_size), 1, handle) != 1)
+    if (add_section_header(&s_info, ".shstrtab", &shstrtab_header))
+        goto err_exit;
+
+
+    if (fwrite(s_info.shstrtab, s_info.shstrtab_len, 1, handle) != 1)
     {
-        fprintf(stderr, "Failed to write %u byte .shstrtab to %s at offset %u\n", be32toh(shstrtab_header.sh_size), argv[1], file_size + shstrtab_offset);
+        fprintf(stderr, "Failed to write %lu byte .shstrtab to %s at offset %li\n", s_info.shstrtab_len, argv[1], file_size + shstrtab_offset);
         fclose(handle);
         return 1;
     }
-    fprintf(stderr, "Wrote %u byte .shstrtab to %s at offset %u\n", be32toh(shstrtab_header.sh_size), argv[1], file_size + shstrtab_offset);
+    fprintf(stderr, "Wrote %lu byte .shstrtab to %s at offset %li\n", s_info.shstrtab_len, argv[1], file_size + shstrtab_offset);
 
-    if (be32toh(shstrtab_header.sh_size) % 4)
+    if (s_info.shstrtab_len % 4)
     {
-        sh_offset = 4 - (be32toh(shstrtab_header.sh_size) % 4);
+        sh_offset = 4 - (s_info.shstrtab_len % 4);
         if (fseek(handle, sh_offset, SEEK_CUR) == -1)
         {
             fprintf(
                 stderr,
-                "Failed to seek to section header offset at %i in %s: %s\n",
-                file_size + shstrtab_offset + be32toh(shstrtab_header.sh_size) + sh_offset,
+                "Failed to seek to section header offset at %lu in %s: %s\n",
+                file_size + shstrtab_offset + s_info.shstrtab_len + sh_offset,
                 argv[1],
                 strerror(errno)
             );
@@ -207,25 +183,21 @@ int main(int argc, char *argv[])
             return 1;
         }
     }
-    fprintf(stderr, "section header offset: %i\n", file_size + shstrtab_offset + be32toh(shstrtab_header.sh_size) + sh_offset);
+    fprintf(stderr, "section header offset: %li\n", file_size + shstrtab_offset + s_info.shstrtab_len + sh_offset);
+    fprintf(stderr, "%li\n", ftell(handle));
 
-    if (fwrite(&null_header, sizeof(Elf32_Shdr), 1, handle) != 1) {
-        fprintf(stderr, "Failed to write null section header to %s\n", argv[1]);
-        fclose(handle);
-        return 1;
-    }
-    if (fwrite(&shstrtab_header, sizeof(Elf32_Shdr), 1, handle) != 1) {
-        fprintf(stderr, "Failed to write .shstrtab section header to %s\n", argv[1]);
+    if (fwrite(s_info.headers, sizeof(Elf32_Shdr), s_info.num_headers, handle) != s_info.num_headers) {
+        fprintf(stderr, "Failed to write %hu section headers to %s\n", s_info.num_headers, argv[1]);
         fclose(handle);
         return 1;
     }
 
     elf_header.e_shentsize = htobe16(sizeof(Elf32_Shdr));
-    elf_header.e_shnum = htobe16(2);
-    elf_header.e_shoff = htobe32(file_size + shstrtab_offset + be32toh(shstrtab_header.sh_size) + sh_offset);
-    elf_header.e_shstrndx = htobe16(1);
+    elf_header.e_shnum = htobe16(s_info.num_headers);
+    elf_header.e_shoff = htobe32(file_size + shstrtab_offset + s_info.shstrtab_len + sh_offset);
+    elf_header.e_shstrndx = htobe16(s_info.num_headers - 1);
 
-    if (fseek(handle, 0, SEEK_SET) == -1 ) {
+    if (fseek(handle, 0, SEEK_SET) == -1) {
         fprintf(stderr, "Failed to seek to beginning of %s: %s\n", argv[1], strerror(errno));
         fclose(handle);
         return 1;
@@ -236,11 +208,11 @@ int main(int argc, char *argv[])
         fclose(handle);
         return 1;
     }
- */
+
     ret = 0;
     goto cleanup;
 
-err:
+err_exit:
     ret = 1;
 
 cleanup:
@@ -253,20 +225,21 @@ cleanup:
 enum ORCError add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh) {
     size_t name_len;
 
-    if (!(s_info->headers = reallocarray(s_info->headers, s_info->num_headers + 1, sizeof(Elf32_Shdr)))) {
-        fprintf(stderr, "Failed to allocate space for %s section header: %s\n", name, strerror(errno));
-        return ORC_CRITICIAL;
-    }
-    memcpy(s_info->headers + (s_info->num_headers * sizeof(Elf32_Shdr)), sh, sizeof(Elf32_Shdr));
-    sh->sh_name = htobe32(s_info->num_headers++);
-
     name_len = strlen(name) + 1; /* plus terminating \0 */
     if (!(s_info->shstrtab = reallocarray(s_info->shstrtab, s_info->shstrtab_len + name_len, sizeof(uint8_t)))) {
         fprintf(stderr, "Failed to allocate %lu bytes of additional space to add %s to .shstrtab: %s\n", name_len, name, strerror(errno));
         return ORC_CRITICIAL;
     }
     strcpy(s_info->shstrtab + s_info->shstrtab_len, name);
+    sh->sh_name = htobe32(s_info->shstrtab_len);
     s_info->shstrtab_len += name_len;
+
+    if (!(s_info->headers = reallocarray(s_info->headers, s_info->num_headers + 1, sizeof(Elf32_Shdr)))) {
+        fprintf(stderr, "Failed to allocate space for %s section header: %s\n", name, strerror(errno));
+        return ORC_CRITICIAL;
+    }
+    memcpy(s_info->headers + s_info->num_headers, sh, sizeof(Elf32_Shdr));
+    s_info->num_headers++;
 
     fprintf(
         stderr,
@@ -296,6 +269,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, struct se
     Elf32_Word dyn_seg_size = be32toh(dyn_seg->p_filesz);
 
     /*
+        TODO
         only for MIPS
         x64 binaries don't have a base address
     */
@@ -357,16 +331,6 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, struct se
 
     if ((err = add_section_header(s_info, ".dynamic", &dynamic)) != ORC_SUCCESS)
         return err;
-
-    // dynamic.sh_name = htobe32(1);
-    // dynamic.sh_type = htobe32(SHT_STRTAB);
-    // dynamic.sh_offset = htobe32(file_size + shstrtab_offset);
-    // dynamic.sh_size = htobe32(11);
-    // dynamic.sh_addralign = htobe32(1);n
-    // if ((err = add_section_header(&s_info, "", &dynamic)) != ORC_SUCCESS) {
-    //     fprintf(stderr, "Failed to add dynamic section header\n");
-    //     return err;
-    // }
 
     return ORC_SUCCESS;
 }
