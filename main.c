@@ -29,6 +29,8 @@
 
     INIT    .init
     FINI    .fini
+
+    REGINFO .region Elf32_RegInfo
 */
 
 struct section_info {
@@ -120,13 +122,10 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        switch (be32toh(program_header.p_type)) {
-            case PT_DYNAMIC:
-                if ((err = parse_dynamic_segment(handle, &program_header, &s_info)) == ORC_CRITICIAL)
-                    goto err_exit;
-                break;
-            default:
-                break;
+        if (be32toh(program_header.p_type) == PT_DYNAMIC) {
+            if ((err = parse_dynamic_segment(handle, &program_header, &s_info)) == ORC_CRITICIAL)
+                goto err_exit;
+            break;
         }
     }
 
@@ -267,11 +266,11 @@ enum ORCError add_section_header(struct section_info *s_info, const char *name, 
 
 enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, struct section_info *s_info) {
     enum ORCError err;
-    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 };
+    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 };
     Elf32_Dyn dynamic_tag;
     Elf32_Addr base_addr;
     Elf32_Off dyn_seg_offset = be32toh(dyn_seg->p_offset);
-    Elf32_Word dyn_seg_size = be32toh(dyn_seg->p_filesz);
+    Elf32_Word dyn_seg_size = be32toh(dyn_seg->p_filesz), syment, symtabno;
 
     /*
         TODO
@@ -335,6 +334,56 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, struct se
     dynamic.sh_type = htobe32(SHT_DYNAMIC);
 
     if ((err = add_section_header(s_info, ".dynamic", &dynamic)) != ORC_SUCCESS)
+        return err;
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_SYMTAB, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_SYMTAB dynamic tag\n");
+        default:
+            return err;
+    }
+    dynsym.sh_addr = dynamic_tag.d_un.d_ptr;
+    fprintf(stderr, "Found DT_SYMTAB at 0x%x\n", be32toh(dynsym.sh_addr));
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_SYMENT, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_SYMENT dynamic tag\n");
+        default:
+            return err;
+    }
+    syment = be32toh(dynamic_tag.d_un.d_val);
+    fprintf(stderr, "Found DT_SYMENT at 0x%x\n", syment);
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_SYMTABNO, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_SYMENT dynamic tag\n");
+        default:
+            return err;
+    }
+    symtabno = be32toh(dynamic_tag.d_un.d_val);
+    fprintf(stderr, "Found DT_MIPS_SYMTABNO at 0x%x\n", symtabno);
+
+    dynsym.sh_offset = htobe32(be32toh(dynsym.sh_addr) - base_addr);
+    dynsym.sh_addralign = htobe32(4); /* TODO: is this always 4 for 32bit and 8 for 64bit? */
+    dynsym.sh_type = htobe32(SHT_SYMTAB);
+    dynsym.sh_flags = htobe32(SHF_ALLOC);
+    dynsym.sh_size = htobe32(syment * symtabno);
+    dynsym.sh_entsize = htobe32(syment);
+    dynsym.sh_link = dynstr.sh_name;
+    /*
+        One greater than the symbol table index of the last local symbol. 
+        https://docs.oracle.com/cd/E19455-01/806-3773/6jct9o0bs/index.html#elf-15226
+        since this is the dynamic string table, this will always be 1
+    */
+    dynsym.sh_info = htobe32(1);
+
+    if ((err = add_section_header(s_info, ".dynsym", &dynsym)) != ORC_SUCCESS)
         return err;
 
     return ORC_SUCCESS;
