@@ -47,21 +47,25 @@ enum ORCError {
     ORC_FILE_IO_ERR,
     ORC_INVALID_ELF,
     ORC_DYN_TAG_NOT_FOUND,
-    ORC_DYN_VALUE_INVALID
+    ORC_DYN_VALUE_INVALID,
+    ORC_PHDR_NOT_FOUND
 };
 
 enum ORCError add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh);
 enum ORCError find_dynamic_tag(FILE *handle, Elf32_Off dyn_seg_offset, Elf32_Word dyn_seg_size, Elf32_Sword tag, Elf32_Dyn *dynamic_tag);
-enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, struct section_info *s_info);
+enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info);
 enum ORCError count_mips_jump_slot_relocs(FILE *handle, Elf32_Off rel_plt_offset, Elf32_Word rel_plt_size, Elf32_Word *count);
+enum ORCError find_program_headers(FILE *handle, Elf32_Off ph_off, Elf32_Half ph_num, Elf32_Word seg_type, Elf32_Phdr **phdrs, Elf32_Half *count);
+enum ORCError calculate_file_offset(Elf32_Phdr *loadable_segs, Elf32_Half num_segs, Elf32_Addr base_addr, Elf32_Addr vaddr, Elf32_Off *file_off);
 
 
 int main(int argc, char *argv[])
 {
     FILE *handle;
     Elf32_Ehdr elf_header;
-    Elf32_Phdr program_header;
+    Elf32_Phdr *loadable_segments = NULL, *dyn_seg = NULL;
     Elf32_Shdr null_section = { 0 };
+    Elf32_Half num_loadable_segments, phdr_count;
     long file_size, shstrtab_offset = 0, sh_offset = 0;
     int ret;
     enum ORCError err;
@@ -95,40 +99,30 @@ int main(int argc, char *argv[])
         goto err_exit;
     }
 
-    /* parse program header info */
-    Elf32_Half ph_num = be16toh(elf_header.e_phnum), ph_size = be16toh(elf_header.e_phentsize);
-    Elf32_Off ph_off = be32toh(elf_header.e_phoff);
-    fprintf(stderr, "Found %hu program headers of size %hu at offset %u\n", ph_num, ph_size, ph_off);
-
-    if (fseek(handle, ph_off, SEEK_SET) == -1)
-    {
-        fprintf(stderr, "Failed to seek to program headers at offset 0x%x in %s: %s\n", ph_off, argv[1], strerror(errno));
-        fclose(handle);
-        return 1;
-    }
-
     if (add_section_header(&s_info, "", &null_section) != ORC_SUCCESS)
        goto err_exit;
 
-    /* get dynamic segment */
-    for (Elf32_Half i = 0; i < ph_num; i++)
-    {
-        if (fread(&program_header, sizeof(Elf32_Phdr), 1, handle) != 1)
-        {
-            if (ferror(handle))
-                fprintf(stderr, "Failed to read program header %hu from %s\n", i, argv[1]);
-            else
-                fprintf(stderr, "Invalid program headers found in %s\n", argv[1]);
+    /* parse program header info */
+    Elf32_Half ph_num = be16toh(elf_header.e_phnum);
+    Elf32_Off ph_off = be32toh(elf_header.e_phoff);
+    fprintf(stderr, "Found %hu program headers at offset %u\n", ph_num, ph_off);
 
-            fclose(handle);
-            return 1;
-        }
-
-        if (be32toh(program_header.p_type) == PT_DYNAMIC) {
-            if ((err = parse_dynamic_segment(handle, &program_header, &s_info)) == ORC_CRITICIAL)
-                goto err_exit;
+    switch (find_program_headers(handle, ph_off, ph_num, PT_LOAD, &loadable_segments, &num_loadable_segments)) {
+        case ORC_SUCCESS:
+        case ORC_PHDR_NOT_FOUND:
             break;
-        }
+        default:
+            goto err_exit;
+    }
+
+    switch (find_program_headers(handle, ph_off, ph_num, PT_DYNAMIC, &dyn_seg, &phdr_count)) {
+        case ORC_SUCCESS:
+            if ((err = parse_dynamic_segment(handle, dyn_seg, loadable_segments, num_loadable_segments, &s_info)) == ORC_CRITICIAL)
+                goto err_exit;
+        case ORC_PHDR_NOT_FOUND:
+            break;
+        default:
+            goto err_exit;
     }
 
     if (fseek(handle, 0L, SEEK_END) == -1 || (file_size = ftell(handle)) == -1)
@@ -222,6 +216,8 @@ err_exit:
     ret = 1;
 
 cleanup:
+    free(dyn_seg);
+    free(loadable_segments);
     free(s_info.headers);
     free(s_info.shstrtab);
     fclose(handle);
@@ -266,7 +262,7 @@ enum ORCError add_section_header(struct section_info *s_info, const char *name, 
 }
 
 
-enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, struct section_info *s_info) {
+enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info) {
     /*
         TODO: and subroutines and better error handling to account
         for various architectures and dynamic tag combinations
@@ -320,7 +316,8 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, struct se
     dynstr.sh_size = dynamic_tag.d_un.d_val;
     fprintf(stderr, "Found DT_STRSZ at %u\n", be32toh(dynstr.sh_size));
 
-    dynstr.sh_offset = htobe32(be32toh(dynstr.sh_addr) - base_addr);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(dynstr.sh_addr), &dynstr.sh_offset)) != ORC_SUCCESS)
+        return err;
     dynstr.sh_addralign = htobe32(1);
     dynstr.sh_type = htobe32(SHT_STRTAB);
     dynstr.sh_flags = htobe32(SHF_ALLOC);
@@ -379,7 +376,8 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, struct se
     symtabno = be32toh(dynamic_tag.d_un.d_val);
     fprintf(stderr, "Found DT_MIPS_SYMTABNO at 0x%x\n", symtabno);
 
-    dynsym.sh_offset = htobe32(be32toh(dynsym.sh_addr) - base_addr);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(dynsym.sh_addr), &dynsym.sh_offset)) != ORC_SUCCESS)
+        return err;
     dynsym.sh_type = htobe32(SHT_DYNSYM);
     dynsym.sh_flags = htobe32(SHF_ALLOC);
     dynsym.sh_size = htobe32(syment * symtabno);
@@ -471,7 +469,8 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, struct se
             return err;
     }
 
-    rel_plt.sh_offset = htobe32(be32toh(rel_plt.sh_addr) - base_addr);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(rel_plt.sh_addr), &rel_plt.sh_offset)) != ORC_SUCCESS)
+        return err;
     rel_plt.sh_type = htobe32(SHT_REL);
     /*
         This section headers sh_info field holds a section header table index.
@@ -490,7 +489,8 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, struct se
 
     */
     got_plt.sh_size = htobe32((num_jump_slot_relocs + 2) * 4);
-    got_plt.sh_offset = htobe32(be32toh(got_plt.sh_addr) - base_addr - 0x10000); /* TODO: calculate dynamically */
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(got_plt.sh_addr), &got_plt.sh_offset)) != ORC_SUCCESS)
+        return err;
     got_plt.sh_type = htobe32(SHT_PROGBITS);
     got_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE) | htobe32(SHF_MIPS_GPREL);
     got_plt.sh_entsize = htobe32(4); /* based on architecture address length */
@@ -557,4 +557,53 @@ enum ORCError count_mips_jump_slot_relocs(FILE *handle, Elf32_Off rel_plt_offset
 
     fprintf(stderr, "Found %u MIPS_JUMP_SLOT relocations in .rel.plt at 0x%x\n", *count, rel_plt_offset);
     return ORC_SUCCESS;
+}
+
+enum ORCError find_program_headers(FILE *handle, Elf32_Off ph_off, Elf32_Half ph_num, Elf32_Word seg_type, Elf32_Phdr **phdrs, Elf32_Half *count) {
+    Elf32_Phdr phdr;
+
+    if (fseek(handle, ph_off, SEEK_SET) == -1) {
+        fprintf(stderr, "Failed to seek to program headers at offset 0x%x: %s\n", ph_off, strerror(errno));
+        return ORC_CRITICIAL;
+    }
+
+    *count = 0;
+    for (Elf32_Half i = 0; i < ph_num; i++) {
+        if (fread(&phdr, sizeof(Elf32_Phdr), 1, handle) != 1)
+        {
+            if (ferror(handle)) {
+                fprintf(stderr, "Failed to read program header %hu\n", i);
+                return ORC_FILE_IO_ERR;
+            }
+            fprintf(stderr, "Invalid program headers\n");
+            return ORC_INVALID_ELF;
+        }
+        if (be32toh(phdr.p_type) == seg_type) {
+            if (!(*phdrs = reallocarray(*phdrs, *count + 1, sizeof(Elf32_Phdr)))) {
+                fprintf(stderr, "Failed to allocate memory %hu program headers: %s\n", *count, strerror(errno));
+                return ORC_CRITICIAL;
+            }
+            memcpy(*phdrs + *count, &phdr, sizeof(Elf32_Phdr));
+            (*count)++;
+        }
+    }
+    if (!*count) {
+        fprintf(stderr, "Failed to find program headers of type %u\n", seg_type);
+        return ORC_PHDR_NOT_FOUND;
+    }
+
+    fprintf(stderr, "Found %hu program headers of type %u\n", *count, seg_type);
+    return ORC_SUCCESS;
+}
+
+enum ORCError calculate_file_offset(Elf32_Phdr *loadable_segs, Elf32_Half num_segs, Elf32_Addr base_addr, Elf32_Addr vaddr, Elf32_Off *file_off) {
+    for (Elf32_Half i = 0; i < num_segs; i++) {
+        if (be32toh(loadable_segs[i].p_vaddr) < vaddr && vaddr < be32toh(loadable_segs[i].p_vaddr) + be32toh(loadable_segs[i].p_memsz)) {
+            *file_off = htobe32(vaddr - ((be32toh(loadable_segs[i].p_vaddr) - be32toh(loadable_segs[i].p_offset) - base_addr) + base_addr));
+            fprintf(stderr, "0x%x\n", be32toh(*file_off));
+            return ORC_SUCCESS;
+        }
+    }
+
+    return ORC_INVALID_ELF;
 }
