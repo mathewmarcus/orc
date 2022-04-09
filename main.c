@@ -17,23 +17,14 @@
 
 /*
     Program Headers
-    INTERP  .interp FileSiz
-    DYNAMIC .dynamic    FileSiz
-
-    ABIFLAGS .MIPS.abiflags
-
-    REGINFO .region Elf32_RegInfo
 
             .MIPS.stubs
 
     dynamic section entries
-    REL .rel.dyn    RELSZ
-    PLTGOT  .got    ((MIPS_SYMTABNO - MIPS_GOTSYM) + MIPS_LOCAL_GOTNO) * sizeof(address)
 
-    INIT    .init
-    FINI    .fini
+    DT_MIPS_RLD_MAP .rld_map
 
-    musl-gcc -fno-PIC -mips16 hello_world.c -mno-abicalls -o hello_world16e_nopic
+    musl-gcc -fno-PIC -mips16 hello_world.c -mno-abicalls -L/mnt/unifi/lib/ -o hello_world16e_nopic
 */
 
 struct section_info {
@@ -337,11 +328,11 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     TODO: fill in missing sht_addralign
    */
     enum ORCError err;
-    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, rel_plt = { 0 }, got_plt = { 0 }, plt = { 0 }, rel_dyn = { 0 };
+    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, rel_plt = { 0 }, got_plt = { 0 }, plt = { 0 }, rel_dyn = { 0 }, got = { 0 };
     Elf32_Dyn dynamic_tag;
     Elf32_Addr base_addr;
     Elf32_Off dyn_seg_offset = be32toh(dyn_seg->p_offset);
-    Elf32_Word dyn_seg_size = be32toh(dyn_seg->p_filesz), syment, symtabno, pltrel, dynstr_idx, got_plt_idx, dynsym_idx;
+    Elf32_Word dyn_seg_size = be32toh(dyn_seg->p_filesz), syment, symtabno, pltrel, dynstr_idx, got_plt_idx, dynsym_idx, mips_local_gotno, mips_gotsym;
 
     /*
         TODO
@@ -576,7 +567,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(got_plt.sh_addr), &got_plt.sh_offset)) != ORC_SUCCESS)
         return err;
     got_plt.sh_type = htobe32(SHT_PROGBITS);
-    got_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE) | htobe32(SHF_MIPS_GPREL);
+    got_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE);
     got_plt.sh_entsize = htobe32(4); /* based on architecture address length */
 
     got_plt_idx = s_info->num_headers;
@@ -629,6 +620,53 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     plt.sh_type = htobe32(SHT_PROGBITS);
 
     if ((err = add_section_header(s_info, ".plt", &plt)) != ORC_SUCCESS)
+        return err;
+
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_PLTGOT, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            got.sh_addr = dynamic_tag.d_un.d_ptr;
+            fprintf(stderr, "Found DT_PLTGOT: 0x%x\n", be32toh(plt.sh_addr));
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_PLTGOT dynamic tag\n");
+            break;
+        default:
+            return err;
+    }
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_LOCAL_GOTNO, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            mips_local_gotno = be32toh(dynamic_tag.d_un.d_val);
+            fprintf(stderr, "Found DT_MIPS_LOCAL_GOTNO: 0x%x\n", mips_local_gotno);
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_MIPS_LOCAL_GOTNO dynamic tag\n");
+            break;
+        default:
+            return err;
+    }
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_GOTSYM, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            mips_gotsym = be32toh(dynamic_tag.d_un.d_val);
+            fprintf(stderr, "Found DT_MIPS_GOTSYM: 0x%x\n", mips_gotsym);
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_MIPS_GOTSYM dynamic tag\n");
+            break;
+        default:
+            return err;
+    }
+    got.sh_addralign = htobe32(16);
+    got.sh_entsize = htobe32(4);
+    got.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE) | htobe32(SHF_MIPS_GPREL);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(got.sh_addr), &got.sh_offset)) != ORC_SUCCESS)
+        return err;
+    got.sh_size = htobe32(((symtabno - mips_gotsym) + mips_local_gotno) * be32toh(got.sh_entsize));
+    got.sh_type = htobe32(SHT_PROGBITS);
+
+    if ((err = add_section_header(s_info, ".got", &got)) != ORC_SUCCESS)
         return err;
 
     return ORC_SUCCESS;
