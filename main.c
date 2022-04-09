@@ -65,7 +65,7 @@ int main(int argc, char *argv[])
     FILE *handle;
     Elf32_Ehdr elf_header;
     Elf32_Phdr *loadable_segments = NULL, *seg = NULL;
-    Elf32_Shdr null_section = { 0 }, interp = { 0 }, mips_abiflags = { 0 };
+    Elf32_Shdr null_section = { 0 }, interp = { 0 }, mips_abiflags = { 0 }, reginfo = { 0 };
     Elf32_Half num_loadable_segments, phdr_count;
     long file_size, shstrtab_offset = 0, sh_offset = 0;
     int ret;
@@ -143,6 +143,27 @@ int main(int argc, char *argv[])
             mips_abiflags.sh_size = seg->p_filesz;
             mips_abiflags.sh_type = htobe32(SHT_MIPS_ABIFLAGS);
             if (add_section_header(&s_info, ".MIPS.abiflags", &mips_abiflags) != ORC_SUCCESS)
+                goto err_exit;
+        case ORC_PHDR_NOT_FOUND:
+            break;
+        default:
+            goto err_exit;
+    }
+
+    switch (find_program_headers(handle, ph_off, ph_num, PT_MIPS_REGINFO, &seg, &phdr_count)) {
+        case ORC_SUCCESS:
+            reginfo.sh_addr = seg->p_vaddr;
+            reginfo.sh_addralign = seg->p_align;
+            if (seg->p_flags & htobe32(PF_R))
+                reginfo.sh_flags |= htobe32(SHF_ALLOC);
+            if (seg->p_flags & htobe32(PF_W))
+                reginfo.sh_flags |= htobe32(SHF_WRITE);
+            if (seg->p_flags & htobe32(PF_X))
+                reginfo.sh_flags |= htobe32(SHF_EXECINSTR);
+            reginfo.sh_offset = seg->p_offset;
+            reginfo.sh_size = seg->p_filesz;
+            reginfo.sh_type = htobe32(SHT_MIPS_REGINFO);
+            if (add_section_header(&s_info, ".reginfo", &reginfo) != ORC_SUCCESS)
                 goto err_exit;
         case ORC_PHDR_NOT_FOUND:
             break;
