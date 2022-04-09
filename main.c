@@ -8,6 +8,7 @@
 #include <endian.h>
 
 #define USAGE "%s elf-file\n"
+#define SHT_MIPS_ABIFLAGS 0x7000002a /* This is not included in elf.h */
 /*
     TODO:
         handle 64 bit
@@ -64,7 +65,7 @@ int main(int argc, char *argv[])
     FILE *handle;
     Elf32_Ehdr elf_header;
     Elf32_Phdr *loadable_segments = NULL, *seg = NULL;
-    Elf32_Shdr null_section = { 0 }, interp = { 0 };
+    Elf32_Shdr null_section = { 0 }, interp = { 0 }, mips_abiflags = { 0 };
     Elf32_Half num_loadable_segments, phdr_count;
     long file_size, shstrtab_offset = 0, sh_offset = 0;
     int ret;
@@ -107,7 +108,6 @@ int main(int argc, char *argv[])
     Elf32_Off ph_off = be32toh(elf_header.e_phoff);
     fprintf(stderr, "Found %hu program headers at offset %u\n", ph_num, ph_off);
 
-
     switch (find_program_headers(handle, ph_off, ph_num, PT_INTERP, &seg, &phdr_count)) {
         case ORC_SUCCESS:
             interp.sh_addr = seg->p_vaddr;
@@ -122,6 +122,27 @@ int main(int argc, char *argv[])
             interp.sh_size = seg->p_filesz;
             interp.sh_type = htobe32(SHT_PROGBITS);
             if (add_section_header(&s_info, ".interp", &interp) != ORC_SUCCESS)
+                goto err_exit;
+        case ORC_PHDR_NOT_FOUND:
+            break;
+        default:
+            goto err_exit;
+    }
+
+    switch (find_program_headers(handle, ph_off, ph_num, PT_MIPS_ABIFLAGS, &seg, &phdr_count)) {
+        case ORC_SUCCESS:
+            mips_abiflags.sh_addr = seg->p_vaddr;
+            mips_abiflags.sh_addralign = seg->p_align;
+            if (seg->p_flags & htobe32(PF_R))
+                mips_abiflags.sh_flags |= htobe32(SHF_ALLOC);
+            if (seg->p_flags & htobe32(PF_W))
+                mips_abiflags.sh_flags |= htobe32(SHF_WRITE);
+            if (seg->p_flags & htobe32(PF_X))
+                mips_abiflags.sh_flags |= htobe32(SHF_EXECINSTR);
+            mips_abiflags.sh_offset = seg->p_offset;
+            mips_abiflags.sh_size = seg->p_filesz;
+            mips_abiflags.sh_type = htobe32(SHT_MIPS_ABIFLAGS);
+            if (add_section_header(&s_info, ".MIPS.abiflags", &mips_abiflags) != ORC_SUCCESS)
                 goto err_exit;
         case ORC_PHDR_NOT_FOUND:
             break;
