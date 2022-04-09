@@ -32,6 +32,8 @@
 
     INIT    .init
     FINI    .fini
+
+    musl-gcc -fno-PIC -mips16 hello_world.c -mno-abicalls -o hello_world16e_nopic
 */
 
 struct section_info {
@@ -335,7 +337,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     TODO: fill in missing sht_addralign
    */
     enum ORCError err;
-    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, rel_plt = { 0 }, got_plt = { 0 }, plt_got = { 0 };
+    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, rel_plt = { 0 }, got_plt = { 0 }, plt = { 0 };
     Elf32_Dyn dynamic_tag;
     Elf32_Addr base_addr;
     Elf32_Off dyn_seg_offset = be32toh(dyn_seg->p_offset);
@@ -559,9 +561,9 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_RWPLT, &dynamic_tag))) {
         case ORC_SUCCESS:
-            plt_got.sh_addr = dynamic_tag.d_un.d_ptr;
-            plt_got.sh_flags |= htobe32(SHF_WRITE);
-            fprintf(stderr, "Found DT_MIPS_RWPLT: 0x%x\n", be32toh(plt_got.sh_addr));
+            plt.sh_addr = dynamic_tag.d_un.d_ptr;
+            plt.sh_flags |= htobe32(SHF_WRITE);
+            fprintf(stderr, "Found DT_MIPS_RWPLT: 0x%x\n", be32toh(plt.sh_addr));
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_MIPS_RWPLT dynamic tag\n");
@@ -570,12 +572,12 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
             return err;
     }
 
-    if (!plt_got.sh_addr) {
+    if (!plt.sh_addr) {
         if (fseek(handle, be32toh(got_plt.sh_offset) + 8, SEEK_SET) == -1) {
             fprintf(stderr, "Failed to seek to .got.plt + 8 sectoin at offset 0x%x: %s\n", be32toh(got_plt.sh_offset) + 8, strerror(errno));
             return ORC_CRITICIAL;
         }
-        if (fread(&plt_got.sh_addr, 4, 1, handle) != 1)
+        if (fread(&plt.sh_addr, 4, 1, handle) != 1)
         {
             if (ferror(handle)) {
                 fprintf(stderr, "Failed to .got.plt at offset 0x%x\n", be32toh(got_plt.sh_offset) + 8);
@@ -586,19 +588,18 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         }
     }
 
-    plt_got.sh_addralign = htobe32(32);
-    plt_got.sh_entsize = num_jump_slot_relocs > 65535 ? htobe32(32) : htobe32(16);
-    plt_got.sh_flags |= htobe32(SHF_ALLOC | SHF_EXECINSTR);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(plt_got.sh_addr), &plt_got.sh_offset)) != ORC_SUCCESS)
+    plt.sh_addralign = htobe32(32);
+    plt.sh_flags |= htobe32(SHF_ALLOC | SHF_EXECINSTR);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(plt.sh_addr), &plt.sh_offset)) != ORC_SUCCESS)
         return err;
     /*
         number of MIPS_JUMP_SLOT relocations * 16 + sizeof(PLT header)
         https://sourceware.org/legacy-ml/binutils/2008-07/txt00000.txt
     */
-    plt_got.sh_size = htobe32((be32toh(plt_got.sh_entsize) * num_jump_slot_relocs) + 32);
-    plt_got.sh_type = htobe32(SHT_PROGBITS);
+    plt.sh_size = htobe32(((num_jump_slot_relocs > 65535 ? 32 : 16) * num_jump_slot_relocs) + 32);
+    plt.sh_type = htobe32(SHT_PROGBITS);
 
-    if ((err = add_section_header(s_info, ".plt.got", &plt_got)) != ORC_SUCCESS)
+    if ((err = add_section_header(s_info, ".plt", &plt)) != ORC_SUCCESS)
         return err;
 
     return ORC_SUCCESS;
