@@ -19,18 +19,18 @@
     INTERP  .interp FileSiz
     DYNAMIC .dynamic    FileSiz
 
+    ABIFLAGS .MIPS.abiflags
+
+    REGINFO .region Elf32_RegInfo
+
+            .MIPS.stubs
+
     dynamic section entries
-    STRTAB  .dynstr STRSZ
-    SYMTAB  .dynsym (MIPS_SYMTABNO * SYMENT)
     REL .rel.dyn    RELSZ
-    JMPREL  .rel.plt    PTLRELSZ
-    MIPS_PLTGOT .got.plt    (((PLTRELSZ/RELENT) + 2) * sizeof(address))
     PLTGOT  .got    ((MIPS_SYMTABNO - MIPS_GOTSYM) + MIPS_LOCAL_GOTNO) * sizeof(address)
 
     INIT    .init
     FINI    .fini
-
-    REGINFO .region Elf32_RegInfo
 */
 
 struct section_info {
@@ -63,8 +63,8 @@ int main(int argc, char *argv[])
 {
     FILE *handle;
     Elf32_Ehdr elf_header;
-    Elf32_Phdr *loadable_segments = NULL, *dyn_seg = NULL;
-    Elf32_Shdr null_section = { 0 };
+    Elf32_Phdr *loadable_segments = NULL, *seg = NULL;
+    Elf32_Shdr null_section = { 0 }, interp = { 0 };
     Elf32_Half num_loadable_segments, phdr_count;
     long file_size, shstrtab_offset = 0, sh_offset = 0;
     int ret;
@@ -107,6 +107,28 @@ int main(int argc, char *argv[])
     Elf32_Off ph_off = be32toh(elf_header.e_phoff);
     fprintf(stderr, "Found %hu program headers at offset %u\n", ph_num, ph_off);
 
+
+    switch (find_program_headers(handle, ph_off, ph_num, PT_INTERP, &seg, &phdr_count)) {
+        case ORC_SUCCESS:
+            interp.sh_addr = seg->p_vaddr;
+            interp.sh_addralign = seg->p_align;
+            if (seg->p_flags & htobe32(PF_R))
+                interp.sh_flags |= htobe32(SHF_ALLOC);
+            if (seg->p_flags & htobe32(PF_W))
+                interp.sh_flags |= htobe32(SHF_WRITE);
+            if (seg->p_flags & htobe32(PF_X))
+                interp.sh_flags |= htobe32(SHF_EXECINSTR);
+            interp.sh_offset = seg->p_offset;
+            interp.sh_size = seg->p_filesz;
+            interp.sh_type = htobe32(SHT_PROGBITS);
+            if (add_section_header(&s_info, ".interp", &interp) != ORC_SUCCESS)
+                goto err_exit;
+        case ORC_PHDR_NOT_FOUND:
+            break;
+        default:
+            goto err_exit;
+    }
+
     switch (find_program_headers(handle, ph_off, ph_num, PT_LOAD, &loadable_segments, &num_loadable_segments)) {
         case ORC_SUCCESS:
         case ORC_PHDR_NOT_FOUND:
@@ -115,9 +137,9 @@ int main(int argc, char *argv[])
             goto err_exit;
     }
 
-    switch (find_program_headers(handle, ph_off, ph_num, PT_DYNAMIC, &dyn_seg, &phdr_count)) {
+    switch (find_program_headers(handle, ph_off, ph_num, PT_DYNAMIC, &seg, &phdr_count)) {
         case ORC_SUCCESS:
-            if ((err = parse_dynamic_segment(handle, dyn_seg, loadable_segments, num_loadable_segments, &s_info)) == ORC_CRITICIAL)
+            if ((err = parse_dynamic_segment(handle, seg, loadable_segments, num_loadable_segments, &s_info)) == ORC_CRITICIAL)
                 goto err_exit;
         case ORC_PHDR_NOT_FOUND:
             break;
@@ -216,7 +238,7 @@ err_exit:
     ret = 1;
 
 cleanup:
-    free(dyn_seg);
+    free(seg);
     free(loadable_segments);
     free(s_info.headers);
     free(s_info.shstrtab);
