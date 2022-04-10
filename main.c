@@ -328,7 +328,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     TODO: fill in missing sht_addralign
    */
     enum ORCError err;
-    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, rel_plt = { 0 }, got_plt = { 0 }, plt = { 0 }, rel_dyn = { 0 }, got = { 0 };
+    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, rel_plt = { 0 }, got_plt = { 0 }, plt = { 0 }, rel_dyn = { 0 }, got = { 0 }, rld_map = { 0 };
     Elf32_Dyn dynamic_tag;
     Elf32_Addr base_addr;
     Elf32_Off dyn_seg_offset = be32toh(dyn_seg->p_offset);
@@ -626,7 +626,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_PLTGOT, &dynamic_tag))) {
         case ORC_SUCCESS:
             got.sh_addr = dynamic_tag.d_un.d_ptr;
-            fprintf(stderr, "Found DT_PLTGOT: 0x%x\n", be32toh(plt.sh_addr));
+            fprintf(stderr, "Found DT_PLTGOT: 0x%x\n", be32toh(got.sh_addr));
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_PLTGOT dynamic tag\n");
@@ -667,6 +667,28 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     got.sh_type = htobe32(SHT_PROGBITS);
 
     if ((err = add_section_header(s_info, ".got", &got)) != ORC_SUCCESS)
+        return err;
+
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_RLD_MAP, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            rld_map.sh_addr = dynamic_tag.d_un.d_ptr;
+            fprintf(stderr, "Found DT_MIPS_RLD_MAP: 0x%x\n", be32toh(rld_map.sh_addr));
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_MIPS_RLD_MAP dynamic tag\n");
+            break;
+        default:
+            return err;
+    }
+    rld_map.sh_addralign = htobe32(4); /* size of instruction */
+    rld_map.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(rld_map.sh_addr), &rld_map.sh_offset)) != ORC_SUCCESS)
+        return err;
+    rld_map.sh_size = htobe32(4); /* size of instruction */
+    rld_map.sh_type = htobe32(SHT_PROGBITS);
+
+    if ((err = add_section_header(s_info, ".rld_map", &rld_map)) != ORC_SUCCESS)
         return err;
 
     return ORC_SUCCESS;
@@ -771,5 +793,6 @@ enum ORCError calculate_file_offset(Elf32_Phdr *loadable_segs, Elf32_Half num_se
         }
     }
 
+    fprintf(stderr, "Failed to find loadable segment containing vaddr 0x%x\n", vaddr);
     return ORC_INVALID_ELF;
 }
