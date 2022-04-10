@@ -51,6 +51,16 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
 enum ORCError count_mips_jump_slot_relocs(FILE *handle, Elf32_Off rel_plt_offset, Elf32_Word rel_plt_size, Elf32_Word *count);
 enum ORCError find_program_headers(FILE *handle, Elf32_Off ph_off, Elf32_Half ph_num, Elf32_Word seg_type, Elf32_Phdr **phdrs, Elf32_Half *count);
 enum ORCError calculate_file_offset(Elf32_Phdr *loadable_segs, Elf32_Half num_segs, Elf32_Addr base_addr, Elf32_Addr vaddr, Elf32_Off *file_off);
+enum ORCError parse_mips_nonpic(
+    FILE *handle,
+    Elf32_Off dyn_seg_offset,
+    Elf32_Word dyn_seg_size,
+    Elf32_Phdr *loadable_segs,
+    Elf32_Half num_loadable_segs,
+    struct section_info *s_info,
+    Elf32_Addr base_addr,
+    Elf32_Word dynsym_idx
+);
 
 
 int main(int argc, char *argv[])
@@ -328,11 +338,11 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     TODO: fill in missing sht_addralign
    */
     enum ORCError err;
-    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, rel_plt = { 0 }, got_plt = { 0 }, plt = { 0 }, rel_dyn = { 0 }, got = { 0 }, rld_map = { 0 };
+    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, rel_dyn = { 0 }, got = { 0 }, rld_map = { 0 };
     Elf32_Dyn dynamic_tag;
     Elf32_Addr base_addr;
     Elf32_Off dyn_seg_offset = be32toh(dyn_seg->p_offset);
-    Elf32_Word dyn_seg_size = be32toh(dyn_seg->p_filesz), syment, symtabno, pltrel, dynstr_idx, got_plt_idx, dynsym_idx, mips_local_gotno, mips_gotsym;
+    Elf32_Word dyn_seg_size = be32toh(dyn_seg->p_filesz), syment, symtabno, dynstr_idx, dynsym_idx, mips_local_gotno, mips_gotsym;
 
     /*
         TODO
@@ -451,38 +461,6 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     if ((err = add_section_header(s_info, ".dynsym", &dynsym)) != ORC_SUCCESS)
         return err;
 
-    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_PLTGOT, &dynamic_tag))) {
-        case ORC_SUCCESS:
-            got_plt.sh_addr = dynamic_tag.d_un.d_ptr;
-            fprintf(stderr, "Found DT_MIPS_PLTGOT: 0x%x\n", be32toh(got_plt.sh_addr));
-            break;
-        case ORC_DYN_TAG_NOT_FOUND:
-            fprintf(stderr, "Failed to find DT_MIPS_PLTGOT dynamic tag\n");
-        default:
-            return err;
-    }
-
-    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_PLTREL, &dynamic_tag))) {
-        case ORC_SUCCESS:
-            pltrel = dynamic_tag.d_un.d_val;
-            /* 
-                TODO:
-                Add support for other architectures which may support
-                DT_RELA relocations - but MIPS expects DT_REL
-            */
-            if (be32toh(pltrel) != DT_REL) { /*  && be32toh(pltrel) != DT_RELA */
-                fprintf(stderr, "DT_PLTREL has invalid value: %u\n", be32toh(pltrel));
-                return ORC_DYN_VALUE_INVALID;
-            }
-            fprintf(stderr, "DT_PLTREL == DT_REL: %u\n", be32toh(pltrel) == DT_REL);
-            rel_plt.sh_type = htobe32(SHT_REL);
-            break;
-        case ORC_DYN_TAG_NOT_FOUND:
-            fprintf(stderr, "Failed to find DT_PLTREL dynamic tag\n");
-        default:
-            return err;
-    }
-
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_REL, &dynamic_tag))) {
         case ORC_SUCCESS:
             rel_dyn.sh_addr = dynamic_tag.d_un.d_ptr;
@@ -497,8 +475,8 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_RELENT, &dynamic_tag))) {
         case ORC_SUCCESS:
-            rel_plt.sh_entsize = rel_dyn.sh_entsize = dynamic_tag.d_un.d_val;
-            fprintf(stderr, "Found DT_RELENT: %u\n", be32toh(rel_plt.sh_entsize));
+            rel_dyn.sh_entsize = dynamic_tag.d_un.d_val;
+            fprintf(stderr, "Found DT_RELENT: %u\n", be32toh(rel_dyn.sh_entsize));
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_RELENT dynamic tag\n");
@@ -509,7 +487,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_RELSZ, &dynamic_tag))) {
         case ORC_SUCCESS:
             rel_dyn.sh_size = dynamic_tag.d_un.d_val;
-            fprintf(stderr, "Found DT_RELSZ: %u\n", be32toh(rel_plt.sh_size));
+            fprintf(stderr, "Found DT_RELSZ: %u\n", be32toh(rel_dyn.sh_size));
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_RELSZ dynamic tag\n");
@@ -521,105 +499,6 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(rel_dyn.sh_addr), &rel_dyn.sh_offset)) != ORC_SUCCESS)
         return err;
     if ((err = add_section_header(s_info, ".rel.dyn", &rel_dyn)) != ORC_SUCCESS)
-        return err;
-
-    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_JMPREL, &dynamic_tag))) {
-        case ORC_SUCCESS:
-            rel_plt.sh_addr = dynamic_tag.d_un.d_ptr;
-            fprintf(stderr, "Found DT_JMPREL: 0x%x\n", be32toh(rel_plt.sh_addr));
-            break;
-        case ORC_DYN_TAG_NOT_FOUND:
-            fprintf(stderr, "Failed to find DT_JMPREL dynamic tag\n");
-        default:
-            return err;
-    }
-
-    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_PLTRELSZ, &dynamic_tag))) {
-        case ORC_SUCCESS:
-            rel_plt.sh_size = dynamic_tag.d_un.d_val;
-            fprintf(stderr, "Found DT_PLTRELSZ: %u\n", be32toh(rel_plt.sh_size));
-            break;
-        case ORC_DYN_TAG_NOT_FOUND:
-            fprintf(stderr, "Failed to find DT_PLTRELSZ dynamic tag\n");
-        default:
-            return err;
-    }
-
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(rel_plt.sh_addr), &rel_plt.sh_offset)) != ORC_SUCCESS)
-        return err;
-    /*
-        This section headers sh_info field holds a section header table index.
-        https://docs.oracle.com/cd/E23824_01/html/819-0690/chapter6-94076.html
-    */
-    rel_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_INFO_LINK);
-    rel_plt.sh_link = htobe32(dynsym_idx);
-
-    Elf32_Word num_jump_slot_relocs;
-    if ((err = count_mips_jump_slot_relocs(handle, be32toh(rel_plt.sh_offset), be32toh(rel_plt.sh_size), &num_jump_slot_relocs)) != ORC_SUCCESS)
-        return err;
-
-    /* 
-        number of R_MIPS_JUMP_SLOT in .rel.plt + pltgot[0] (dynamic linker's PLT resolver) + pltgot[1] (object link map)
-        multiplied by the size of a MIPS32 address (4 bytes)
-
-    */
-    got_plt.sh_size = htobe32((num_jump_slot_relocs + 2) * 4);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(got_plt.sh_addr), &got_plt.sh_offset)) != ORC_SUCCESS)
-        return err;
-    got_plt.sh_type = htobe32(SHT_PROGBITS);
-    got_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE);
-    got_plt.sh_entsize = htobe32(4); /* based on architecture address length */
-
-    got_plt_idx = s_info->num_headers;
-    if ((err = add_section_header(s_info, ".got.plt", &got_plt)) != ORC_SUCCESS)
-        return err;
-
-    rel_plt.sh_info = htobe32(got_plt_idx);
-    if ((err = add_section_header(s_info, ".rel.plt", &rel_plt)) != ORC_SUCCESS)
-        return err;
-
-
-    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_RWPLT, &dynamic_tag))) {
-        case ORC_SUCCESS:
-            plt.sh_addr = dynamic_tag.d_un.d_ptr;
-            plt.sh_flags |= htobe32(SHF_WRITE);
-            fprintf(stderr, "Found DT_MIPS_RWPLT: 0x%x\n", be32toh(plt.sh_addr));
-            break;
-        case ORC_DYN_TAG_NOT_FOUND:
-            fprintf(stderr, "Failed to find DT_MIPS_RWPLT dynamic tag\n");
-            break;
-        default:
-            return err;
-    }
-
-    if (!plt.sh_addr) {
-        if (fseek(handle, be32toh(got_plt.sh_offset) + 8, SEEK_SET) == -1) {
-            fprintf(stderr, "Failed to seek to .got.plt + 8 sectoin at offset 0x%x: %s\n", be32toh(got_plt.sh_offset) + 8, strerror(errno));
-            return ORC_CRITICIAL;
-        }
-        if (fread(&plt.sh_addr, 4, 1, handle) != 1)
-        {
-            if (ferror(handle)) {
-                fprintf(stderr, "Failed to .got.plt at offset 0x%x\n", be32toh(got_plt.sh_offset) + 8);
-                return ORC_FILE_IO_ERR;
-            }
-            fprintf(stderr, "Invalid .got.plt section\n");
-            return ORC_INVALID_ELF;
-        }
-    }
-
-    plt.sh_addralign = htobe32(32);
-    plt.sh_flags |= htobe32(SHF_ALLOC | SHF_EXECINSTR);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(plt.sh_addr), &plt.sh_offset)) != ORC_SUCCESS)
-        return err;
-    /*
-        number of MIPS_JUMP_SLOT relocations * 16 + sizeof(PLT header)
-        https://sourceware.org/legacy-ml/binutils/2008-07/txt00000.txt
-    */
-    plt.sh_size = htobe32(((num_jump_slot_relocs > 65535 ? 32 : 16) * num_jump_slot_relocs) + 32);
-    plt.sh_type = htobe32(SHT_PROGBITS);
-
-    if ((err = add_section_header(s_info, ".plt", &plt)) != ORC_SUCCESS)
         return err;
 
 
@@ -690,6 +569,17 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
 
     if ((err = add_section_header(s_info, ".rld_map", &rld_map)) != ORC_SUCCESS)
         return err;
+
+    parse_mips_nonpic(
+        handle,
+        dyn_seg_offset,
+        dyn_seg_size,
+        loadable_segs,
+        num_loadable_segs,
+        s_info,
+        base_addr,
+        dynsym_idx
+    );
 
     return ORC_SUCCESS;
 }
@@ -795,4 +685,164 @@ enum ORCError calculate_file_offset(Elf32_Phdr *loadable_segs, Elf32_Half num_se
 
     fprintf(stderr, "Failed to find loadable segment containing vaddr 0x%x\n", vaddr);
     return ORC_INVALID_ELF;
+}
+
+enum ORCError parse_mips_nonpic(
+    FILE *handle,
+    Elf32_Off dyn_seg_offset,
+    Elf32_Word dyn_seg_size,
+    Elf32_Phdr *loadable_segs,
+    Elf32_Half num_loadable_segs,
+    struct section_info *s_info,
+    Elf32_Addr base_addr,
+    Elf32_Word dynsym_idx
+) {
+    Elf32_Shdr rel_plt = { 0 }, got_plt = { 0 }, plt = { 0 };
+    Elf32_Dyn dynamic_tag;
+    Elf32_Word got_plt_idx;
+    enum ORCError err;
+
+    /*
+        This will add attempt to add the following sections,
+        present in MIPS non-PIC ABI objects:
+            * .got.plt
+            * .rel.plt
+            * .plt
+    */
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_PLTREL, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            if (be32toh(dynamic_tag.d_un.d_val) != DT_REL) {
+                fprintf(stderr, "DT_PLTREL has invalid value: %u; MIPS non-PIC ABI expect DT_REL (%u)\n", be32toh(dynamic_tag.d_un.d_val), DT_REL);
+                return ORC_DYN_VALUE_INVALID;
+            }
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_PLTREL dynamic tag\n");
+        default:
+            return err;
+    }
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_RELENT, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            rel_plt.sh_entsize = dynamic_tag.d_un.d_val;
+            fprintf(stderr, "Found DT_RELENT: %u\n", be32toh(rel_plt.sh_entsize));
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_RELENT dynamic tag\n");
+        default:
+            return err;
+    }
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_PLTGOT, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            got_plt.sh_addr = dynamic_tag.d_un.d_ptr;
+            fprintf(stderr, "Found DT_MIPS_PLTGOT: 0x%x\n", be32toh(got_plt.sh_addr));
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_MIPS_PLTGOT dynamic tag\n");
+        default:
+            return err;
+    }
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_JMPREL, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            rel_plt.sh_addr = dynamic_tag.d_un.d_ptr;
+            fprintf(stderr, "Found DT_JMPREL: 0x%x\n", be32toh(rel_plt.sh_addr));
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_JMPREL dynamic tag\n");
+        default:
+            return err;
+    }
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_PLTRELSZ, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            rel_plt.sh_size = dynamic_tag.d_un.d_val;
+            fprintf(stderr, "Found DT_PLTRELSZ: %u\n", be32toh(rel_plt.sh_size));
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_PLTRELSZ dynamic tag\n");
+        default:
+            return err;
+    }
+
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(rel_plt.sh_addr), &rel_plt.sh_offset)) != ORC_SUCCESS)
+        return err;
+    /*
+        This section headers sh_info field holds a section header table index.
+        https://docs.oracle.com/cd/E23824_01/html/819-0690/chapter6-94076.html
+    */
+    rel_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_INFO_LINK);
+    rel_plt.sh_link = htobe32(dynsym_idx);
+
+    Elf32_Word num_jump_slot_relocs;
+    if ((err = count_mips_jump_slot_relocs(handle, be32toh(rel_plt.sh_offset), be32toh(rel_plt.sh_size), &num_jump_slot_relocs)) != ORC_SUCCESS)
+        return err;
+
+    /* 
+        number of R_MIPS_JUMP_SLOT in .rel.plt + pltgot[0] (dynamic linker's PLT resolver) + pltgot[1] (object link map)
+        multiplied by the size of a MIPS32 address (4 bytes)
+
+    */
+    got_plt.sh_size = htobe32((num_jump_slot_relocs + 2) * 4);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(got_plt.sh_addr), &got_plt.sh_offset)) != ORC_SUCCESS)
+        return err;
+    got_plt.sh_type = htobe32(SHT_PROGBITS);
+    got_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE);
+    got_plt.sh_entsize = htobe32(4); /* based on architecture address length */
+
+    got_plt_idx = s_info->num_headers;
+    if ((err = add_section_header(s_info, ".got.plt", &got_plt)) != ORC_SUCCESS)
+        return err;
+
+    rel_plt.sh_info = htobe32(got_plt_idx);
+    if ((err = add_section_header(s_info, ".rel.plt", &rel_plt)) != ORC_SUCCESS)
+        return err;
+
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_RWPLT, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            plt.sh_addr = dynamic_tag.d_un.d_ptr;
+            plt.sh_flags |= htobe32(SHF_WRITE);
+            fprintf(stderr, "Found DT_MIPS_RWPLT: 0x%x\n", be32toh(plt.sh_addr));
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_MIPS_RWPLT dynamic tag\n");
+            break;
+        default:
+            return err;
+    }
+
+    if (!plt.sh_addr) {
+        if (fseek(handle, be32toh(got_plt.sh_offset) + 8, SEEK_SET) == -1) {
+            fprintf(stderr, "Failed to seek to .got.plt + 8 sectoin at offset 0x%x: %s\n", be32toh(got_plt.sh_offset) + 8, strerror(errno));
+            return ORC_CRITICIAL;
+        }
+        if (fread(&plt.sh_addr, 4, 1, handle) != 1)
+        {
+            if (ferror(handle)) {
+                fprintf(stderr, "Failed to read .got.plt at offset 0x%x\n", be32toh(got_plt.sh_offset) + 8);
+                return ORC_FILE_IO_ERR;
+            }
+            fprintf(stderr, "Invalid .got.plt section\n");
+            return ORC_INVALID_ELF;
+        }
+    }
+
+    plt.sh_addralign = htobe32(32);
+    plt.sh_flags |= htobe32(SHF_ALLOC | SHF_EXECINSTR);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(plt.sh_addr), &plt.sh_offset)) != ORC_SUCCESS)
+        return err;
+    /*
+        number of MIPS_JUMP_SLOT relocations * 16 + sizeof(PLT header)
+        https://sourceware.org/legacy-ml/binutils/2008-07/txt00000.txt
+    */
+    plt.sh_size = htobe32(((num_jump_slot_relocs > 65535 ? 32 : 16) * num_jump_slot_relocs) + 32);
+    plt.sh_type = htobe32(SHT_PROGBITS);
+
+    if ((err = add_section_header(s_info, ".plt", &plt)) != ORC_SUCCESS)
+        return err;
+
+    return ORC_SUCCESS;
 }
