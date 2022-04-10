@@ -47,7 +47,7 @@ enum ORCError {
 
 enum ORCError add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh);
 enum ORCError find_dynamic_tag(FILE *handle, Elf32_Off dyn_seg_offset, Elf32_Word dyn_seg_size, Elf32_Sword tag, Elf32_Dyn *dynamic_tag);
-enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info);
+enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info, Elf32_Ehdr *elf_hdr);
 enum ORCError count_mips_jump_slot_relocs(FILE *handle, Elf32_Off rel_plt_offset, Elf32_Word rel_plt_size, Elf32_Word *count);
 enum ORCError find_program_headers(FILE *handle, Elf32_Off ph_off, Elf32_Half ph_num, Elf32_Word seg_type, Elf32_Phdr **phdrs, Elf32_Half *count);
 enum ORCError calculate_file_offset(Elf32_Phdr *loadable_segs, Elf32_Half num_segs, Elf32_Addr base_addr, Elf32_Addr vaddr, Elf32_Off *file_off);
@@ -184,7 +184,7 @@ int main(int argc, char *argv[])
 
     switch (find_program_headers(handle, ph_off, ph_num, PT_DYNAMIC, &seg, &phdr_count)) {
         case ORC_SUCCESS:
-            if ((err = parse_dynamic_segment(handle, seg, loadable_segments, num_loadable_segments, &s_info)) == ORC_CRITICIAL)
+            if ((err = parse_dynamic_segment(handle, seg, loadable_segments, num_loadable_segments, &s_info, &elf_header)) == ORC_CRITICIAL)
                 goto err_exit;
         case ORC_PHDR_NOT_FOUND:
             break;
@@ -329,7 +329,7 @@ enum ORCError add_section_header(struct section_info *s_info, const char *name, 
 }
 
 
-enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info) {
+enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info, Elf32_Ehdr *elf_hdr) {
     /*
         TODO: and subroutines and better error handling to account
         for various architectures and dynamic tag combinations
@@ -553,6 +553,15 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         case ORC_SUCCESS:
             rld_map.sh_addr = dynamic_tag.d_un.d_ptr;
             fprintf(stderr, "Found DT_MIPS_RLD_MAP: 0x%x\n", be32toh(rld_map.sh_addr));
+            rld_map.sh_addralign = htobe32(4); /* size of instruction */
+            rld_map.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE);
+            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(rld_map.sh_addr), &rld_map.sh_offset)) != ORC_SUCCESS)
+                return err;
+            rld_map.sh_size = htobe32(4); /* size of instruction */
+            rld_map.sh_type = htobe32(SHT_PROGBITS);
+
+            if ((err = add_section_header(s_info, ".rld_map", &rld_map)) != ORC_SUCCESS)
+                return err;
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_MIPS_RLD_MAP dynamic tag\n");
@@ -560,26 +569,25 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         default:
             return err;
     }
-    rld_map.sh_addralign = htobe32(4); /* size of instruction */
-    rld_map.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(rld_map.sh_addr), &rld_map.sh_offset)) != ORC_SUCCESS)
-        return err;
-    rld_map.sh_size = htobe32(4); /* size of instruction */
-    rld_map.sh_type = htobe32(SHT_PROGBITS);
 
-    if ((err = add_section_header(s_info, ".rld_map", &rld_map)) != ORC_SUCCESS)
-        return err;
-
-    parse_mips_nonpic(
-        handle,
-        dyn_seg_offset,
-        dyn_seg_size,
-        loadable_segs,
-        num_loadable_segs,
-        s_info,
-        base_addr,
-        dynsym_idx
-    );
+    if (
+        elf_hdr->e_ident[EI_ABIVERSION] == 0x1 &&
+        (htobe32(elf_hdr->e_flags) & EF_MIPS_CPIC) &&
+        !(htobe32(elf_hdr->e_flags) & EF_MIPS_PIC)
+    ) {
+        err = parse_mips_nonpic(
+            handle,
+            dyn_seg_offset,
+            dyn_seg_size,
+            loadable_segs,
+            num_loadable_segs,
+            s_info,
+            base_addr,
+            dynsym_idx
+        );
+        if (err != ORC_SUCCESS)
+            return err;
+    }
 
     return ORC_SUCCESS;
 }
