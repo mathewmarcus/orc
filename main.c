@@ -98,6 +98,15 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    if (!(
+        elf_header.e_ident[EI_CLASS] & ELFCLASS32 &&
+        elf_header.e_ident[EI_DATA] & ELFDATA2MSB &&
+        be16toh(elf_header.e_machine) == EM_MIPS
+        )) {
+        fprintf(stderr, "Currently only 32 bit big-endian MIPS binaries are supported");
+        goto err_exit;
+    }
+
     if (elf_header.e_shoff || elf_header.e_shnum) {
         fprintf(stderr, "%s already contains %hu section headers at offset 0x%x\n", argv[1], be16toh(elf_header.e_shnum), be32toh(elf_header.e_shoff));
         goto err_exit;
