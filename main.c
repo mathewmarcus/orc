@@ -61,6 +61,7 @@ enum ORCError parse_mips_nonpic(
     Elf32_Addr base_addr,
     Elf32_Word dynsym_idx
 );
+enum ORCError zero_elfhdr_sh(FILE *handle, Elf32_Ehdr *elf_hdr);
 
 
 int main(int argc, char *argv[])
@@ -863,3 +864,35 @@ enum ORCError parse_mips_nonpic(
 
     return ORC_SUCCESS;
 }
+
+
+enum ORCError zero_elfhdr_sh(FILE *handle, Elf32_Ehdr *elf_hdr) {
+    if (fseek(handle, 0, SEEK_SET) == -1) {
+        fprintf(stderr, "Failed to seek to beginning of file: %s\n", strerror(errno));
+        return ORC_FILE_IO_ERR;
+    }
+
+    elf_hdr->e_shoff = elf_hdr->e_shnum = elf_hdr->e_shentsize = elf_hdr->e_shstrndx = 0;
+
+    if (fwrite(elf_hdr, sizeof(Elf32_Ehdr), 1, handle) != 1) {
+        fprintf(stderr, "Failed to zero out section header info in ELF header\n");
+        return ORC_FILE_IO_ERR;
+    }
+
+    fprintf(stderr, "Zeroed out section header info in ELF header\n");
+    return ORC_SUCCESS;
+}
+
+/*
+    enum ORCError build_mips_stubs_section() {
+        fseek dynsym + (SYMENT * MIPS_GOTSYM)
+
+        for (Elf32_word i = 0; i < MIPS_SYMTABNO; i++) {
+            if symbol is FUNC and index is UND and sym_value == got_value {
+                //the lowest of these is the start of .MIPS.stubs
+                sym_value == stub_addr
+            }
+        }
+
+    }
+*/
