@@ -61,6 +61,16 @@ enum ORCError parse_mips_nonpic(
     Elf32_Addr base_addr,
     Elf32_Word dynsym_idx
 );
+enum ORCError get_mips_stub_info(
+    FILE *handle,
+    Elf32_Word mips_external_gotno,
+    Elf32_Off got_off,
+    Elf32_Off dynsym_off,
+    Elf32_Word got_entsize,
+    Elf32_Word dynsym_entsize,
+    Elf32_Word *stub_count,
+    Elf32_Addr *stub_base_addr
+);
 enum ORCError zero_elfhdr_sh(FILE *handle, Elf32_Ehdr *elf_hdr);
 
 
@@ -348,12 +358,12 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     TODO: fill in missing sht_addralign
    */
     enum ORCError err;
-    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, rel_dyn = { 0 }, got = { 0 }, rld_map = { 0 };
+    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, rel_dyn = { 0 }, got = { 0 }, rld_map = { 0 }, mips_stubs = { 0 };
     Elf32_Dyn dynamic_tag;
-    Elf32_Addr base_addr;
-    Elf32_Off dyn_seg_offset = be32toh(dyn_seg->p_offset);
-    Elf32_Word dyn_seg_size = be32toh(dyn_seg->p_filesz), syment, symtabno, dynstr_idx, dynsym_idx, mips_local_gotno, mips_gotsym;
-
+    Elf32_Addr base_addr, got_entry;
+    Elf32_Off dyn_seg_offset = be32toh(dyn_seg->p_offset), got_off, dynsym_off;
+    Elf32_Word dyn_seg_size = be32toh(dyn_seg->p_filesz), syment, symtabno, dynstr_idx, dynsym_idx, mips_local_gotno, mips_gotsym, mips_external_gotno, mips_stub_count;
+    Elf32_Sym sym;
     /*
         TODO
         only for MIPS
@@ -596,6 +606,44 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
             dynsym_idx
         );
         if (err != ORC_SUCCESS)
+            return err;
+    }
+
+
+    //fseek dynsym + (SYMENT * MIPS_GOTSYM)
+
+    /*
+        parse MIPS stubs
+    */
+    mips_external_gotno = symtabno - mips_gotsym;
+    got_off = be32toh(got.sh_offset) + (be32toh(got.sh_entsize) * mips_local_gotno);
+    dynsym_off = be32toh(dynsym.sh_offset) + (be32toh(dynsym.sh_entsize) * mips_gotsym);
+    fprintf(stderr, "GOT offset: 0x%x\ndynsym offset: 0x%x\nnum external gotno: %u\n", got_off, dynsym_off, mips_external_gotno);
+
+    err = get_mips_stub_info(
+        handle,
+        mips_external_gotno,
+        got_off,
+        dynsym_off,
+        be32toh(got.sh_entsize),
+        be32toh(dynsym.sh_entsize),
+        &mips_stub_count,
+        &mips_stubs.sh_addr
+    );
+    if (err != ORC_SUCCESS) {
+        fprintf(stderr, "Failed to build .MIPS.stubs section\n");
+        return err;
+    }
+    if (!mips_stub_count)
+        fprintf(stderr, "No .MIPS.stubs detected\n");
+    else {
+        mips_stubs.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_EXECINSTR);
+        if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(mips_stubs.sh_addr), &mips_stubs.sh_offset)) != ORC_SUCCESS)
+            return err;
+        mips_stubs.sh_size = htobe32(sizeof(Elf32_Addr) * 4 * mips_stub_count); /* are stubs always 4 instructions? are they always terminated with a null stub? */
+        mips_stubs.sh_type = htobe32(SHT_PROGBITS);
+
+        if ((err = add_section_header(s_info, ".MIPS.stubs", &mips_stubs)) != ORC_SUCCESS)
             return err;
     }
 
@@ -883,16 +931,60 @@ enum ORCError zero_elfhdr_sh(FILE *handle, Elf32_Ehdr *elf_hdr) {
     return ORC_SUCCESS;
 }
 
-/*
-    enum ORCError build_mips_stubs_section() {
-        fseek dynsym + (SYMENT * MIPS_GOTSYM)
+enum ORCError get_mips_stub_info(
+    FILE *handle,
+    Elf32_Word mips_external_gotno,
+    Elf32_Off got_off,
+    Elf32_Off dynsym_off,
+    Elf32_Word got_entsize,
+    Elf32_Word dynsym_entsize,
+    Elf32_Word *stub_count,
+    Elf32_Addr *stub_base_addr
+) {
+    Elf32_Sym sym;
+    Elf32_Addr got_entry;
+    *stub_base_addr = 0xffffffff;
+    *stub_count = 0;
 
-        for (Elf32_word i = 0; i < MIPS_SYMTABNO; i++) {
-            if symbol is FUNC and index is UND and sym_value == got_value {
-                //the lowest of these is the start of .MIPS.stubs
-                sym_value == stub_addr
+    for (Elf32_Word i = 0; i < mips_external_gotno; i++) {
+        if (fseek(handle, dynsym_off + (i * dynsym_entsize), SEEK_SET) == -1) {
+            fprintf(stderr, "Failed to seek to dynsym at offset 0x%x: %s\n", dynsym_off + (i * dynsym_entsize), strerror(errno));
+            return ORC_FILE_IO_ERR;
+        }
+        if (fread(&sym, sizeof(Elf32_Sym), 1, handle) != 1)
+        {
+            if (ferror(handle)) {
+                fprintf(stderr, "Failed to read dynamic symbol at offset 0x%x\n", dynsym_off + (i * dynsym_entsize));
+                return ORC_FILE_IO_ERR;
             }
+            fprintf(stderr, "Invalid dynsyms\n");
+            return ORC_INVALID_ELF;
         }
 
+        if (
+            ELF32_ST_TYPE(sym.st_info) & STT_FUNC &&
+            be16toh(sym.st_shndx) == SHN_UNDEF
+           ) {
+            if (fseek(handle, got_off + (i * got_entsize), SEEK_SET) == -1) {
+                fprintf(stderr, "Failed to seek to GOT at offset 0x%x: %s\n", got_off + (i * got_entsize), strerror(errno));
+                return ORC_FILE_IO_ERR;
+            }
+            if (fread(&got_entry, sizeof(Elf32_Addr), 1, handle) != 1)
+            {
+                if (ferror(handle)) {
+                    fprintf(stderr, "Failed to read GOT entry at offset 0x%x\n", got_off + (i * got_entsize));
+                    return ORC_FILE_IO_ERR;
+                }
+                fprintf(stderr, "Invalid GOT\n");
+                return ORC_INVALID_ELF;
+            }
+
+            if (sym.st_value == got_entry) {
+                (*stub_count)++;
+                if (be32toh(sym.st_value) < be32toh(*stub_base_addr))
+                    *stub_base_addr = sym.st_value;
+            }
+        }
     }
-*/
+    return ORC_SUCCESS;
+}
