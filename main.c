@@ -841,6 +841,7 @@ enum ORCError parse_mips_nonpic(
     */
     rel_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_INFO_LINK);
     rel_plt.sh_link = htobe32(dynsym_idx);
+    rel_plt.sh_type = htobe32(SHT_REL);
 
     Elf32_Word num_jump_slot_relocs;
     if ((err = count_mips_jump_slot_relocs(handle, be32toh(rel_plt.sh_offset), be32toh(rel_plt.sh_size), &num_jump_slot_relocs)) != ORC_SUCCESS)
