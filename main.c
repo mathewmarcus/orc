@@ -637,10 +637,11 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     if (!mips_stub_count)
         fprintf(stderr, "No .MIPS.stubs detected\n");
     else {
+        mips_stubs.sh_addralign = htobe32(sizeof(Elf32_Addr));
         mips_stubs.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_EXECINSTR);
         if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(mips_stubs.sh_addr), &mips_stubs.sh_offset)) != ORC_SUCCESS)
             return err;
-        mips_stubs.sh_size = htobe32(sizeof(Elf32_Addr) * 4 * mips_stub_count); /* are stubs always 4 instructions? are they always terminated with a null stub? */
+        mips_stubs.sh_size = htobe32(sizeof(Elf32_Addr) * 4 * (mips_stub_count + 1)); /* are stubs always 4 instructions? are they always terminated with a null stub? */
         mips_stubs.sh_type = htobe32(SHT_PROGBITS);
 
         if ((err = add_section_header(s_info, ".MIPS.stubs", &mips_stubs)) != ORC_SUCCESS)
@@ -964,7 +965,8 @@ enum ORCError get_mips_stub_info(
 
         if (
             ELF32_ST_TYPE(sym.st_info) & STT_FUNC &&
-            be16toh(sym.st_shndx) == SHN_UNDEF
+            be16toh(sym.st_shndx) == SHN_UNDEF &&
+            be32toh(sym.st_value) != 0
            ) {
             if (fseek(handle, got_off + (i * got_entsize), SEEK_SET) == -1) {
                 fprintf(stderr, "Failed to seek to GOT at offset 0x%x: %s\n", got_off + (i * got_entsize), strerror(errno));
