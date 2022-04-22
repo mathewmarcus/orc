@@ -50,7 +50,7 @@ enum ORCError find_dynamic_tag(FILE *handle, Elf32_Off dyn_seg_offset, Elf32_Wor
 enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info, Elf32_Ehdr *elf_hdr);
 enum ORCError count_mips_jump_slot_relocs(FILE *handle, Elf32_Off rel_plt_offset, Elf32_Word rel_plt_size, Elf32_Word *count);
 enum ORCError find_program_headers(FILE *handle, Elf32_Off ph_off, Elf32_Half ph_num, Elf32_Word seg_type, Elf32_Phdr **phdrs, Elf32_Half *count);
-enum ORCError calculate_file_offset(Elf32_Phdr *loadable_segs, Elf32_Half num_segs, Elf32_Addr base_addr, Elf32_Addr vaddr, Elf32_Off *file_off);
+enum ORCError calculate_file_offset(Elf32_Phdr *loadable_segs, Elf32_Half num_segs, Elf32_Addr vaddr, Elf32_Off *file_off);
 enum ORCError parse_mips_nonpic(
     FILE *handle,
     Elf32_Off dyn_seg_offset,
@@ -403,7 +403,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     dynstr.sh_size = dynamic_tag.d_un.d_val;
     fprintf(stderr, "Found DT_STRSZ at %u\n", be32toh(dynstr.sh_size));
 
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(dynstr.sh_addr), &dynstr.sh_offset)) != ORC_SUCCESS)
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(dynstr.sh_addr), &dynstr.sh_offset)) != ORC_SUCCESS)
         return err;
     dynstr.sh_addralign = htobe32(1);
     dynstr.sh_type = htobe32(SHT_STRTAB);
@@ -463,7 +463,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     symtabno = be32toh(dynamic_tag.d_un.d_val);
     fprintf(stderr, "Found DT_MIPS_SYMTABNO at 0x%x\n", symtabno);
 
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(dynsym.sh_addr), &dynsym.sh_offset)) != ORC_SUCCESS)
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(dynsym.sh_addr), &dynsym.sh_offset)) != ORC_SUCCESS)
         return err;
     dynsym.sh_type = htobe32(SHT_DYNSYM);
     dynsym.sh_flags = htobe32(SHF_ALLOC);
@@ -516,7 +516,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     }
     rel_dyn.sh_flags = htobe32(SHF_ALLOC);
     rel_dyn.sh_link = htobe32(dynsym_idx);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(rel_dyn.sh_addr), &rel_dyn.sh_offset)) != ORC_SUCCESS)
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(rel_dyn.sh_addr), &rel_dyn.sh_offset)) != ORC_SUCCESS)
         return err;
     if ((err = add_section_header(s_info, ".rel.dyn", &rel_dyn)) != ORC_SUCCESS)
         return err;
@@ -560,7 +560,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     got.sh_addralign = htobe32(16);
     got.sh_entsize = htobe32(4);
     got.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE) | htobe32(SHF_MIPS_GPREL);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(got.sh_addr), &got.sh_offset)) != ORC_SUCCESS)
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(got.sh_addr), &got.sh_offset)) != ORC_SUCCESS)
         return err;
     got.sh_size = htobe32(((symtabno - mips_gotsym) + mips_local_gotno) * be32toh(got.sh_entsize));
     got.sh_type = htobe32(SHT_PROGBITS);
@@ -575,7 +575,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
             fprintf(stderr, "Found DT_MIPS_RLD_MAP: 0x%x\n", be32toh(rld_map.sh_addr));
             rld_map.sh_addralign = htobe32(4); /* size of instruction */
             rld_map.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE);
-            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(rld_map.sh_addr), &rld_map.sh_offset)) != ORC_SUCCESS)
+            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(rld_map.sh_addr), &rld_map.sh_offset)) != ORC_SUCCESS)
                 return err;
             rld_map.sh_size = htobe32(4); /* size of instruction */
             rld_map.sh_type = htobe32(SHT_PROGBITS);
@@ -639,7 +639,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     else {
         mips_stubs.sh_addralign = htobe32(sizeof(Elf32_Addr));
         mips_stubs.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_EXECINSTR);
-        if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(mips_stubs.sh_addr), &mips_stubs.sh_offset)) != ORC_SUCCESS)
+        if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(mips_stubs.sh_addr), &mips_stubs.sh_offset)) != ORC_SUCCESS)
             return err;
         mips_stubs.sh_size = htobe32(sizeof(Elf32_Addr) * 4 * (mips_stub_count + 1)); /* are stubs always 4 instructions? are they always terminated with a null stub? */
         mips_stubs.sh_type = htobe32(SHT_PROGBITS);
@@ -741,10 +741,10 @@ enum ORCError find_program_headers(FILE *handle, Elf32_Off ph_off, Elf32_Half ph
     return ORC_SUCCESS;
 }
 
-enum ORCError calculate_file_offset(Elf32_Phdr *loadable_segs, Elf32_Half num_segs, Elf32_Addr base_addr, Elf32_Addr vaddr, Elf32_Off *file_off) {
+enum ORCError calculate_file_offset(Elf32_Phdr *loadable_segs, Elf32_Half num_segs, Elf32_Addr vaddr, Elf32_Off *file_off) {
     for (Elf32_Half i = 0; i < num_segs; i++) {
         if (be32toh(loadable_segs[i].p_vaddr) < vaddr && vaddr < be32toh(loadable_segs[i].p_vaddr) + be32toh(loadable_segs[i].p_memsz)) {
-            *file_off = htobe32(vaddr - ((be32toh(loadable_segs[i].p_vaddr) - be32toh(loadable_segs[i].p_offset) - base_addr) + base_addr));
+            *file_off = htobe32((vaddr - be32toh(loadable_segs[i].p_vaddr)) + be32toh(loadable_segs[i].p_offset));
             fprintf(stderr, "0x%x\n", be32toh(*file_off));
             return ORC_SUCCESS;
         }
@@ -834,7 +834,7 @@ enum ORCError parse_mips_nonpic(
             return err;
     }
 
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(rel_plt.sh_addr), &rel_plt.sh_offset)) != ORC_SUCCESS)
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(rel_plt.sh_addr), &rel_plt.sh_offset)) != ORC_SUCCESS)
         return err;
     /*
         This section headers sh_info field holds a section header table index.
@@ -854,7 +854,7 @@ enum ORCError parse_mips_nonpic(
 
     */
     got_plt.sh_size = htobe32((num_jump_slot_relocs + 2) * 4);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(got_plt.sh_addr), &got_plt.sh_offset)) != ORC_SUCCESS)
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(got_plt.sh_addr), &got_plt.sh_offset)) != ORC_SUCCESS)
         return err;
     got_plt.sh_type = htobe32(SHT_PROGBITS);
     got_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE);
@@ -900,7 +900,7 @@ enum ORCError parse_mips_nonpic(
 
     plt.sh_addralign = htobe32(32);
     plt.sh_flags |= htobe32(SHF_ALLOC | SHF_EXECINSTR);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, base_addr, be32toh(plt.sh_addr), &plt.sh_offset)) != ORC_SUCCESS)
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(plt.sh_addr), &plt.sh_offset)) != ORC_SUCCESS)
         return err;
     /*
         number of MIPS_JUMP_SLOT relocations * 16 + sizeof(PLT header)
