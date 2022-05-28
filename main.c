@@ -562,7 +562,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     got.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE) | htobe32(SHF_MIPS_GPREL);
     if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(got.sh_addr), &got.sh_offset)) != ORC_SUCCESS)
         return err;
-    got.sh_size = htobe32(mips_local_gotno * be32toh(got.sh_entsize));
+    got.sh_size = htobe32(((symtabno - mips_gotsym) + mips_local_gotno) * be32toh(got.sh_entsize));
     got.sh_type = htobe32(SHT_PROGBITS);
 
     if ((err = add_section_header(s_info, ".got", &got)) != ORC_SUCCESS)
