@@ -790,7 +790,7 @@ enum ORCError parse_mips_nonpic(
 ) {
     Elf32_Shdr rel_plt = { 0 }, got_plt = { 0 }, plt = { 0 };
     Elf32_Dyn dynamic_tag;
-    Elf32_Word got_plt_idx;
+    Elf32_Word plt_idx;
     enum ORCError err;
 
     /*
@@ -884,12 +884,7 @@ enum ORCError parse_mips_nonpic(
     got_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE);
     got_plt.sh_entsize = htobe32(4); /* based on architecture address length */
 
-    got_plt_idx = s_info->num_headers;
     if ((err = add_section_header(s_info, ".got.plt", &got_plt)) != ORC_SUCCESS)
-        return err;
-
-    rel_plt.sh_info = htobe32(got_plt_idx);
-    if ((err = add_section_header(s_info, ".rel.plt", &rel_plt)) != ORC_SUCCESS)
         return err;
 
 
@@ -933,7 +928,12 @@ enum ORCError parse_mips_nonpic(
     plt.sh_size = htobe32(((num_jump_slot_relocs > 65535 ? 32 : 16) * num_jump_slot_relocs) + 32);
     plt.sh_type = htobe32(SHT_PROGBITS);
 
+    plt_idx = s_info->num_headers;
     if ((err = add_section_header(s_info, ".plt", &plt)) != ORC_SUCCESS)
+        return err;
+
+    rel_plt.sh_info = htobe32(plt_idx);
+    if ((err = add_section_header(s_info, ".rel.plt", &rel_plt)) != ORC_SUCCESS)
         return err;
 
     return ORC_SUCCESS;
