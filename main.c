@@ -72,6 +72,7 @@ enum ORCError get_mips_stub_info(
     Elf32_Addr *stub_base_addr
 );
 enum ORCError zero_elfhdr_sh(FILE *handle, Elf32_Ehdr *elf_hdr);
+enum ORCError calculate_hash_size(FILE *handle, Elf32_Shdr *hash_section);
 
 
 int main(int argc, char *argv[])
@@ -358,9 +359,9 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     TODO: fill in missing sht_addralign
    */
     enum ORCError err;
-    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, rel_dyn = { 0 }, got = { 0 }, rld_map = { 0 }, mips_stubs = { 0 };
+    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, rel_dyn = { 0 }, got = { 0 }, rld_map = { 0 }, mips_stubs = { 0 }, hash = { 0 };
     Elf32_Dyn dynamic_tag;
-    Elf32_Addr base_addr, got_entry;
+    Elf32_Addr base_addr = 0, got_entry;
     Elf32_Off dyn_seg_offset = be32toh(dyn_seg->p_offset), got_off, dynsym_off;
     Elf32_Word dyn_seg_size = be32toh(dyn_seg->p_filesz), syment, symtabno, dynstr_idx, dynsym_idx, mips_local_gotno, mips_gotsym, mips_external_gotno, mips_stub_count;
     Elf32_Sym sym;
@@ -520,6 +521,29 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         return err;
     if ((err = add_section_header(s_info, ".rel.dyn", &rel_dyn)) != ORC_SUCCESS)
         return err;
+
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_HASH, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            fprintf(stderr, "Found HASH at 0x%x\n", be32toh(dynamic_tag.d_un.d_ptr));
+            // elf_header->e_ident[EI_CLASS] & ELFCLASS64 ? htobe64(8) : htobe32(4)
+            hash.sh_addr = dynamic_tag.d_un.d_ptr;
+            hash.sh_addralign = hash.sh_entsize = htobe32(sizeof(Elf32_Addr));
+            hash.sh_flags = htobe32(SHF_ALLOC);
+            hash.sh_link = htobe32(dynsym_idx);
+            hash.sh_offset = dynamic_tag.d_un.d_ptr - htobe32(base_addr);
+            if ((err = calculate_hash_size(handle, &hash)) != ORC_SUCCESS)
+                return err;
+            hash.sh_type = htobe32(SHT_HASH);
+            if ((err = add_section_header(s_info, ".hash", &hash)) != ORC_SUCCESS)
+                return err;
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_HASH dynamic tag\n");
+            break;
+        default:
+            return err;
+    }
 
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_PLTGOT, &dynamic_tag))) {
@@ -989,5 +1013,41 @@ enum ORCError get_mips_stub_info(
             }
         }
     }
+    return ORC_SUCCESS;
+}
+
+
+/* https://docs.oracle.com/cd/E23824_01/html/819-0690/chapter6-48031.html */
+enum ORCError calculate_hash_size(FILE *handle, Elf32_Shdr *hash_section) {
+    Elf32_Word nbucket, nchain;
+
+    if (fseek(handle, be32toh(hash_section->sh_offset), SEEK_SET) == -1) {
+        fprintf(stderr, "Failed to seek to hash at offset 0x%x: %s\n", be32toh(hash_section->sh_offset), strerror(errno));
+        return ORC_FILE_IO_ERR;
+    }
+
+    if (fread(&nbucket, sizeof(Elf32_Word), 1, handle) != 1) {
+        if (ferror(handle)) {
+            fprintf(stderr, "Failed to read hash nbucket at offset 0x%x\n", be32toh(hash_section->sh_offset));
+            return ORC_FILE_IO_ERR;
+        }
+        fprintf(stderr, "Invalid hash\n");
+        return ORC_INVALID_ELF;
+    }
+    nbucket = be32toh(nbucket);
+    fprintf(stderr, "hash nbucket: %u\n", nbucket);
+
+    if (fread(&nchain, sizeof(Elf32_Word), 1, handle) != 1) {
+        if (ferror(handle)) {
+            fprintf(stderr, "Failed to read hash nchain at offset 0x%x\n", be32toh(hash_section->sh_offset) + 4);
+            return ORC_FILE_IO_ERR;
+        }
+        fprintf(stderr, "Invalid hash\n");
+        return ORC_INVALID_ELF;
+    }
+    nchain = be32toh(nchain);
+    fprintf(stderr, "hash nchain: %u\n", nchain);
+
+    hash_section->sh_size = htobe32(sizeof(Elf32_Word) * (2 + nchain + nbucket));
     return ORC_SUCCESS;
 }
