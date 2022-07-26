@@ -73,6 +73,15 @@ enum ORCError get_mips_stub_info(
 );
 enum ORCError zero_elfhdr_sh(FILE *handle, Elf32_Ehdr *elf_hdr);
 enum ORCError calculate_hash_size(FILE *handle, Elf32_Shdr *hash_section);
+enum ORCError parse_dynamic_relocation_section(
+    FILE *handle,
+    Elf32_Off dyn_seg_offset,
+    Elf32_Word dyn_seg_size,
+    Elf32_Phdr *loadable_segs,
+    Elf32_Half num_loadable_segs,
+    struct section_info *s_info,
+    Elf32_Word dynsym_idx
+);
 
 
 int main(int argc, char *argv[])
@@ -359,7 +368,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     TODO: fill in missing sht_addralign
    */
     enum ORCError err;
-    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, rel_dyn = { 0 }, got = { 0 }, rld_map = { 0 }, mips_stubs = { 0 }, hash = { 0 };
+    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, got = { 0 }, rld_map = { 0 }, mips_stubs = { 0 }, hash = { 0 };
     Elf32_Dyn dynamic_tag;
     Elf32_Addr base_addr = 0, got_entry;
     Elf32_Off dyn_seg_offset = be32toh(dyn_seg->p_offset), got_off, dynsym_off;
@@ -482,45 +491,18 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     if ((err = add_section_header(s_info, ".dynsym", &dynsym)) != ORC_SUCCESS)
         return err;
 
-    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_REL, &dynamic_tag))) {
-        case ORC_SUCCESS:
-            rel_dyn.sh_addr = dynamic_tag.d_un.d_ptr;
-            rel_dyn.sh_type = htobe32(SHT_REL);
-            fprintf(stderr, "Found DT_REL: %u\n", be32toh(rel_dyn.sh_addr));
-            break;
-        case ORC_DYN_TAG_NOT_FOUND:
-            fprintf(stderr, "Failed to find DT_REL dynamic tag\n");
-        default:
-            return err;
-    }
+    if ((err = parse_dynamic_relocation_section(
+        handle,
+        dyn_seg_offset,
+        dyn_seg_size,
+        loadable_segs,
+        num_loadable_segs,
+        s_info,
+        dynsym_idx)) != ORC_SUCCESS) {
 
-    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_RELENT, &dynamic_tag))) {
-        case ORC_SUCCESS:
-            rel_dyn.sh_entsize = dynamic_tag.d_un.d_val;
-            fprintf(stderr, "Found DT_RELENT: %u\n", be32toh(rel_dyn.sh_entsize));
-            break;
-        case ORC_DYN_TAG_NOT_FOUND:
-            fprintf(stderr, "Failed to find DT_RELENT dynamic tag\n");
-        default:
-            return err;
-    }
-
-    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_RELSZ, &dynamic_tag))) {
-        case ORC_SUCCESS:
-            rel_dyn.sh_size = dynamic_tag.d_un.d_val;
-            fprintf(stderr, "Found DT_RELSZ: %u\n", be32toh(rel_dyn.sh_size));
-            break;
-        case ORC_DYN_TAG_NOT_FOUND:
-            fprintf(stderr, "Failed to find DT_RELSZ dynamic tag\n");
-        default:
-            return err;
-    }
-    rel_dyn.sh_flags = htobe32(SHF_ALLOC);
-    rel_dyn.sh_link = htobe32(dynsym_idx);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(rel_dyn.sh_addr), &rel_dyn.sh_offset)) != ORC_SUCCESS)
+        fprintf(stderr, "Failed to parse dynamic relocation section\n");
         return err;
-    if ((err = add_section_header(s_info, ".rel.dyn", &rel_dyn)) != ORC_SUCCESS)
-        return err;
+    }
 
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_HASH, &dynamic_tag))) {
@@ -820,7 +802,13 @@ enum ORCError parse_mips_nonpic(
             fprintf(stderr, "Found DT_RELENT: %u\n", be32toh(rel_plt.sh_entsize));
             break;
         case ORC_DYN_TAG_NOT_FOUND:
-            fprintf(stderr, "Failed to find DT_RELENT dynamic tag\n");
+            /*
+                Evidently some MIPS executables will not have a DT_RELENT tag
+                if they don't have a DT_REL section
+            */
+            rel_plt.sh_entsize = htobe32(sizeof(Elf32_Rel));
+            fprintf(stderr, "Failed to find DT_RELENT dynamic tag, defaulting to sizeof(Elf32_rel) == %lu\n", sizeof(Elf32_Rel));
+            break;
         default:
             return err;
     }
@@ -1049,5 +1037,86 @@ enum ORCError calculate_hash_size(FILE *handle, Elf32_Shdr *hash_section) {
     fprintf(stderr, "hash nchain: %u\n", nchain);
 
     hash_section->sh_size = htobe32(sizeof(Elf32_Word) * (2 + nchain + nbucket));
+    return ORC_SUCCESS;
+}
+
+
+
+enum ORCError parse_dynamic_relocation_section(
+    FILE *handle,
+    Elf32_Off dyn_seg_offset,
+    Elf32_Word dyn_seg_size,
+    Elf32_Phdr *loadable_segs,
+    Elf32_Half num_loadable_segs,
+    struct section_info *s_info,
+    Elf32_Word dynsym_idx
+) {
+    enum ORCError err;
+    Elf32_Dyn dynamic_tag;
+    Elf32_Shdr section_hdr = { 0 };
+    Elf32_Sword reloc_entry_size_tag, reloc_table_size_tag;
+    char *reloc_entry_size_tag_name, *reloc_table_size_tag_name, *sh_name;
+
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_REL, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            section_hdr.sh_addr = dynamic_tag.d_un.d_ptr;
+            section_hdr.sh_type = htobe32(SHT_REL);
+            reloc_entry_size_tag = DT_RELENT;
+            reloc_table_size_tag = DT_RELSZ;
+            reloc_entry_size_tag_name = "DT_RELENT";
+            reloc_table_size_tag_name = "DT_RELSZ";
+            sh_name = ".rel.dyn";
+            fprintf(stderr, "Found DT_REL: 0x%x\n", be32toh(section_hdr.sh_addr));
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_REL dynamic tag\n");
+            switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_RELA, &dynamic_tag))) {
+                case ORC_SUCCESS:
+                    section_hdr.sh_addr = dynamic_tag.d_un.d_ptr;
+                    section_hdr.sh_type = htobe32(SHT_RELA);
+                    reloc_entry_size_tag = DT_RELAENT;
+                    reloc_table_size_tag = DT_RELASZ;
+                    reloc_entry_size_tag_name = "DT_RELAENT";
+                    reloc_table_size_tag_name = "DT_RELASZ";
+                    sh_name = ".rela.dyn";
+                    fprintf(stderr, "Found DT_RELA: 0x%x\n", be32toh(section_hdr.sh_addr));
+                    break;
+                case ORC_DYN_TAG_NOT_FOUND: /* This means there are not dynamic relocations */
+                    fprintf(stderr, "Failed to find DT_RELA dynamic tag\n");
+                    err = ORC_SUCCESS;
+            }
+        default:
+            return err;
+    }
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, reloc_entry_size_tag, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            section_hdr.sh_entsize = dynamic_tag.d_un.d_val;
+            fprintf(stderr, "Found %s: %u\n", reloc_entry_size_tag_name, be32toh(section_hdr.sh_entsize));
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find %s dynamic tag\n", reloc_entry_size_tag_name);
+        default:
+            return err;
+    }
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, reloc_table_size_tag, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            section_hdr.sh_size = dynamic_tag.d_un.d_val;
+            fprintf(stderr, "Found %s: %u\n", reloc_table_size_tag_name, be32toh(section_hdr.sh_size));
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find %s dynamic tag\n", reloc_table_size_tag_name);
+        default:
+            return err;
+    }
+    section_hdr.sh_flags = htobe32(SHF_ALLOC);
+    section_hdr.sh_link = htobe32(dynsym_idx);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(section_hdr.sh_addr), &section_hdr.sh_offset)) != ORC_SUCCESS)
+        return err;
+    if ((err = add_section_header(s_info, sh_name, &section_hdr)) != ORC_SUCCESS)
+        return err;
+
     return ORC_SUCCESS;
 }
