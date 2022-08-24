@@ -94,12 +94,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (!(
-        elf_header.e_ident[EI_CLASS] & ELFCLASS32 &&
-        elf_header.e_ident[EI_DATA] & ELFDATA2MSB &&
-        be16toh(elf_header.e_machine) == EM_MIPS
-        )) {
-        fprintf(stderr, "Currently only 32 bit big-endian MIPS binaries are supported");
+    if (!IS_SUPPORTED_ARCH((&elf_header))) {
+        fprintf(stderr, "Currently only 32 bit big-endian MIPS binaries are supported\n");
         goto err_exit;
     }
 
@@ -571,11 +567,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
             return err;
     }
 
-    if (
-        elf_hdr->e_ident[EI_ABIVERSION] == 0x1 &&
-        (htobe32(elf_hdr->e_flags) & EF_MIPS_CPIC) &&
-        !(htobe32(elf_hdr->e_flags) & EF_MIPS_PIC)
-    ) {
+    if (IS_MIPS_NONPIC(elf_hdr)) {
         err = parse_mips_nonpic(
             handle,
             dyn_seg_offset,
