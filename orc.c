@@ -290,3 +290,64 @@ enum ORCError find_dynamic_symbol(FILE *handle, const char *sym_name, const char
     return ORC_SYM_NOT_FOUND;
 
 }
+
+
+enum ORCError parse_rel_plt_from_dyn_seg(FILE *handle, Elf32_Off dyn_seg_offset, Elf32_Word dyn_seg_size, Elf32_Shdr *rel_plt) {
+    Elf32_Dyn dynamic_tag;
+    enum ORCError err;
+
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_PLTREL, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            if (be32toh(dynamic_tag.d_un.d_val) != DT_REL) {
+                fprintf(stderr, "DT_PLTREL has invalid value: %u; MIPS non-PIC ABI expect DT_REL (%u)\n", be32toh(dynamic_tag.d_un.d_val), DT_REL);
+                return ORC_DYN_VALUE_INVALID;
+            }
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_PLTREL dynamic tag\n");
+        default:
+            return err;
+    }
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_RELENT, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            rel_plt->sh_entsize = dynamic_tag.d_un.d_val;
+            fprintf(stderr, "Found DT_RELENT: %u\n", be32toh(rel_plt->sh_entsize));
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            /*
+                Evidently some MIPS executables will not have a DT_RELENT tag
+                if they don't have a DT_REL section
+            */
+            rel_plt->sh_entsize = htobe32(sizeof(Elf32_Rel));
+            fprintf(stderr, "Failed to find DT_RELENT dynamic tag, defaulting to sizeof(Elf32_rel) == %lu\n", sizeof(Elf32_Rel));
+            break;
+        default:
+            return err;
+    }
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_JMPREL, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            rel_plt->sh_addr = dynamic_tag.d_un.d_ptr;
+            fprintf(stderr, "Found DT_JMPREL: 0x%x\n", be32toh(rel_plt->sh_addr));
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_JMPREL dynamic tag\n");
+        default:
+            return err;
+    }
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_PLTRELSZ, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            rel_plt->sh_size = dynamic_tag.d_un.d_val;
+            fprintf(stderr, "Found DT_PLTRELSZ: %u\n", be32toh(rel_plt->sh_size));
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_PLTRELSZ dynamic tag\n");
+        default:
+            return err;
+    }
+
+    return ORC_SUCCESS;
+}

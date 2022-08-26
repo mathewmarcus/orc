@@ -36,5 +36,6 @@ enum ORCError get_mips_stub_info(
 enum ORCError calculate_hash_size(FILE *handle, Elf32_Shdr *hash_section);
 enum ORCError read_dynstr_table(FILE *handle, Elf32_Phdr *dyn_seg, char **dynstr_table);
 enum ORCError find_dynamic_symbol(FILE *handle, const char *sym_name, const char *dynstr_table, const Elf32_Shdr *dynsym, Elf32_Sym *sym, Elf32_Word *sym_idx);
+enum ORCError parse_rel_plt_from_dyn_seg(FILE *handle, Elf32_Off dyn_seg_offset, Elf32_Word dyn_seg_size, Elf32_Shdr *rel_plt);
 
 #endif
