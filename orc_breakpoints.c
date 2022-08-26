@@ -17,10 +17,8 @@
 
 /*
     TODO:
-    1. check if file is nonPIC
-    2. if file is nonPIC,read .got.plt from MIPS_PLTGOT
-    3. read .got from PLTGOT
-    4. read MIPS_GOTSYM
+    1. read loadable segments and use to parse file offsets
+    2. read MIPS_GOTSYM
     
     algorithm
     if (sym_index < MIPS_GOTSYM) {
@@ -51,13 +49,14 @@ int main(int argc, char *argv[])
     enum ORCError err;
     FILE *handle;
     Elf32_Ehdr elf_hdr;
-    Elf32_Half ph_num, phdr_count;
+    Elf32_Half ph_num, phdr_count, num_loadable_segments;
     Elf32_Off ph_off;
-    Elf32_Phdr *dyn_seg = NULL;
+    Elf32_Phdr *dyn_seg = NULL, *loadable_segments = NULL;
     Elf32_Dyn dynamic_tag;
-    Elf32_Shdr dynsym_shdr;
+    Elf32_Shdr dynsym_shdr, rel_plt_shdr;
     Elf32_Sym dyn_sym;
     Elf32_Word dyn_sym_idx;
+    Elf32_Addr base_addr, got_addr, got_plt_addr;
     char *dynstr_table = NULL;
 
     if (argc < 3)
@@ -99,6 +98,24 @@ int main(int argc, char *argv[])
             goto err_exit;
     }
 
+    switch (find_program_headers(handle, ph_off, ph_num, PT_LOAD, &loadable_segments, &num_loadable_segments)) {
+        case ORC_SUCCESS:
+        case ORC_PHDR_NOT_FOUND:
+            break;
+        default:
+            goto err_exit;
+    }
+
+    switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_MIPS_BASE_ADDRESS, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            base_addr = be32toh(dynamic_tag.d_un.d_ptr);
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find MIPS_BASE_ADDRESS dynamic tag\n");
+        default:
+            return err;
+    }
+
     switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_SYMTAB, &dynamic_tag))) {
         case ORC_SUCCESS:
             dynsym_shdr.sh_addr = be32toh(dynamic_tag.d_un.d_ptr);
@@ -108,6 +125,10 @@ int main(int argc, char *argv[])
         default:
             return err;
     }
+    if ((err = calculate_file_offset(loadable_segments, num_loadable_segments, dynsym_shdr.sh_addr, &dynsym_shdr.sh_offset)) != ORC_SUCCESS)
+        return err;
+    dynsym_shdr.sh_offset = be32toh(dynsym_shdr.sh_offset);
+
     switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_SYMENT, &dynamic_tag))) {
         case ORC_SUCCESS:
             dynsym_shdr.sh_entsize = be32toh(dynamic_tag.d_un.d_val);
@@ -127,7 +148,38 @@ int main(int argc, char *argv[])
             return err;
     }
 
-    if (read_dynstr_table(handle, dyn_seg, &dynstr_table) != ORC_SUCCESS) {
+    if (IS_MIPS_NONPIC((&elf_hdr))) {
+        if ((err = parse_rel_plt_from_dyn_seg(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), &rel_plt_shdr)))
+            return err;
+        /* The above function will return big endian addresses */
+        rel_plt_shdr.sh_addr = be32toh(rel_plt_shdr.sh_addr);
+        rel_plt_shdr.sh_entsize = be32toh(rel_plt_shdr.sh_entsize);
+        rel_plt_shdr.sh_size = be32toh(rel_plt_shdr.sh_size);
+
+        switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_MIPS_PLTGOT, &dynamic_tag))) {
+            case ORC_SUCCESS:
+                got_plt_addr = be32toh(dynamic_tag.d_un.d_ptr);
+                fprintf(stderr, "Found DT_MIPS_PLTGOT: 0x%x\n", got_plt_addr);
+                break;
+            case ORC_DYN_TAG_NOT_FOUND:
+                fprintf(stderr, "Failed to find DT_MIPS_PLTGOT dynamic tag\n");
+            default:
+                return err;
+        }
+    }
+    switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_PLTGOT, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            got_addr = be32toh(dynamic_tag.d_un.d_ptr);
+            fprintf(stderr, "Found DT_PLTGOT: 0x%x\n", got_addr);
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_PLTGOT dynamic tag\n");
+            break;
+        default:
+            return err;
+    }
+
+    if (read_dynstr_table(handle, dyn_seg, loadable_segments, num_loadable_segments, &dynstr_table) != ORC_SUCCESS) {
         fprintf(stderr, "Failed to read dynamic string table\n");
         goto err_exit;
     }

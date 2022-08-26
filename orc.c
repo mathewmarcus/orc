@@ -208,21 +208,23 @@ enum ORCError calculate_hash_size(FILE *handle, Elf32_Shdr *hash_section) {
     return ORC_SUCCESS;
 }
 
-enum ORCError read_dynstr_table(FILE *handle, Elf32_Phdr *dyn_seg, char **dynstr_table) {
+enum ORCError read_dynstr_table(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phdr *loadable_segs, Elf32_Half num_segs, char **dynstr_table) {
     enum ORCError err;
-    Elf32_Addr dynstr_addr;
+    Elf32_Off dynstr_off;
     Elf32_Word dynstr_size;
     Elf32_Dyn dynamic_tag;
 
     switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_STRTAB, &dynamic_tag))) {
         case ORC_SUCCESS:
-            dynstr_addr = be32toh(dynamic_tag.d_un.d_ptr);
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_STRTAB dynamic tag\n");
         default:
             return err;
     }
+    if ((err = calculate_file_offset(loadable_segs, num_segs, be32toh(dynamic_tag.d_un.d_ptr), &dynstr_off)) != ORC_SUCCESS)
+        return err;
+    dynstr_off = be32toh(dynstr_off);
     
     switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_STRSZ, &dynamic_tag))) {
         case ORC_SUCCESS:
@@ -238,27 +240,29 @@ enum ORCError read_dynstr_table(FILE *handle, Elf32_Phdr *dyn_seg, char **dynstr
         fprintf(stderr, "Failed to allocate %u bytes for dynamic string array: %s\n", dynstr_size, strerror(errno));
         return ORC_CRITICIAL;
     }
-    if (fseek(handle, dynstr_addr, SEEK_SET) == -1) {
-        fprintf(stderr, "Failed to seek to dynamic string table at 0x%x: %s\n", dynstr_addr, strerror(errno));
+    if (fseek(handle, dynstr_off, SEEK_SET) == -1) {
+        fprintf(stderr, "Failed to seek to dynamic string table at 0x%x: %s\n", dynstr_off, strerror(errno));
         return ORC_FILE_IO_ERR;
     }
 
+    fprintf(stderr, "Attempting to read %u bytes of dynamic string table...\n", dynstr_size);
     if (fread(*dynstr_table, 1, dynstr_size, handle) != dynstr_size)
     {
         if (ferror(handle)) {
-            fprintf(stderr, "Failed to read %u bytes of dynamic string table at 0x%x\n", dynstr_size, dynstr_addr);
+            fprintf(stderr, "Failed to read %u bytes of dynamic string table at 0x%x\n", dynstr_size, dynstr_off);
             return ORC_FILE_IO_ERR;
         }
-        fprintf(stderr, "Invalid dynamic string table at 0x%x\n", dynstr_addr);
+        fprintf(stderr, "Invalid dynamic string table at 0x%x\n", dynstr_off);
         return ORC_INVALID_ELF;
     }
+    fprintf(stderr, "Read %u bytes of dynamic string table\n", dynstr_size);
 
     return ORC_SUCCESS;
 }
 
 
 enum ORCError find_dynamic_symbol(FILE *handle, const char *sym_name, const char *dynstr_table, const Elf32_Shdr *dynsym, Elf32_Sym *sym, Elf32_Word *sym_idx) {
-    if (fseek(handle, dynsym->sh_addr, SEEK_SET) == -1) {
+    if (fseek(handle, dynsym->sh_offset, SEEK_SET) == -1) {
        fprintf(stderr, "Failed to seek to dynamic symbol table at 0x%x: %s\n", dynsym->sh_addr, strerror(errno));
        return ORC_CRITICIAL;
     }
