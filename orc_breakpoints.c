@@ -17,9 +17,6 @@
 
 /*
     TODO:
-    1. read loadable segments and use to parse file offsets
-    2. read MIPS_GOTSYM
-    
     algorithm
     if (sym_index < MIPS_GOTSYM) {
         if (nonPIC and symbol reloc is R_MIPS_JUMP_SLOT) {
@@ -55,7 +52,7 @@ int main(int argc, char *argv[])
     Elf32_Dyn dynamic_tag;
     Elf32_Shdr dynsym_shdr, rel_plt_shdr;
     Elf32_Sym dyn_sym;
-    Elf32_Word dyn_sym_idx;
+    Elf32_Word dyn_sym_idx, mips_gotsym;
     Elf32_Addr base_addr, got_addr, got_plt_addr;
     char *dynstr_table = NULL;
 
@@ -144,6 +141,18 @@ int main(int argc, char *argv[])
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_MIPS_SYMTABNO dynamic tag\n");
+        default:
+            return err;
+    }
+
+    switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_MIPS_GOTSYM, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            mips_gotsym = be32toh(dynamic_tag.d_un.d_val);
+            fprintf(stderr, "Found DT_MIPS_GOTSYM: %u\n", mips_gotsym);
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_MIPS_GOTSYM dynamic tag\n");
+            break;
         default:
             return err;
     }
