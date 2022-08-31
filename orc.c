@@ -355,3 +355,31 @@ enum ORCError parse_rel_plt_from_dyn_seg(FILE *handle, Elf32_Off dyn_seg_offset,
 
     return ORC_SUCCESS;
 }
+
+
+enum ORCError find_r_mips_jump_slot_rel(FILE *handle, Elf32_Shdr *rel_plt, Elf32_Word sym_idx, Elf32_Rel *rel, Elf32_Word *rel_idx) {
+    if (fseek(handle, rel_plt->sh_offset, SEEK_SET) == -1) {
+        fprintf(stderr, "Failed to seek to .rel.plt section at offset %u: %s\n", rel_plt->sh_offset, strerror(errno));
+        return ORC_CRITICIAL;
+    }
+    fprintf(stderr, "Reading relocation in .rel.plt at offset 0x%x\n", rel_plt->sh_offset);
+
+    for (Elf32_Word i = 0; i < rel_plt->sh_size; i += rel_plt->sh_entsize) {
+        if (fread(rel, rel_plt->sh_entsize, 1, handle) != 1) {
+            if (ferror(handle)) {
+                fprintf(stderr, "Failed to read .rel.plt relocation %u\n", i/rel_plt->sh_entsize);
+                return ORC_FILE_IO_ERR;
+            }
+            fprintf(stderr, "Invalid .rel.plt section\n");
+            return ORC_INVALID_ELF;
+        }
+
+        if (ELF32_R_TYPE(be32toh(rel->r_info)) == R_MIPS_JUMP_SLOT && ELF32_R_SYM(be32toh(rel->r_info)) == sym_idx) {
+            *rel_idx = i / rel_plt->sh_entsize;
+            fprintf(stderr, "Found MIPS_JUMP_SLOT relocation %u for dynamic symbol %u\n", *rel_idx, sym_idx);
+            return ORC_SUCCESS;
+        }
+    }
+
+    return ORC_REL_NOT_FOUND;
+}

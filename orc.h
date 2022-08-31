@@ -15,7 +15,8 @@ enum ORCError {
     ORC_DYN_TAG_NOT_FOUND,
     ORC_DYN_VALUE_INVALID,
     ORC_PHDR_NOT_FOUND,
-    ORC_SYM_NOT_FOUND
+    ORC_SYM_NOT_FOUND,
+    ORC_REL_NOT_FOUND
 };
 
 
@@ -37,5 +38,7 @@ enum ORCError calculate_hash_size(FILE *handle, Elf32_Shdr *hash_section);
 enum ORCError read_dynstr_table(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phdr *loadable_segs, Elf32_Half num_segs, char **dynstr_table);
 enum ORCError find_dynamic_symbol(FILE *handle, const char *sym_name, const char *dynstr_table, const Elf32_Shdr *dynsym, Elf32_Sym *sym, Elf32_Word *sym_idx);
 enum ORCError parse_rel_plt_from_dyn_seg(FILE *handle, Elf32_Off dyn_seg_offset, Elf32_Word dyn_seg_size, Elf32_Shdr *rel_plt);
+enum ORCError find_r_mips_jump_slot_rel(FILE *handle, Elf32_Shdr *rel_plt, Elf32_Word sym_idx, Elf32_Rel *rel, Elf32_Word *rel_idx);
+
 
 #endif

@@ -52,8 +52,9 @@ int main(int argc, char *argv[])
     Elf32_Dyn dynamic_tag;
     Elf32_Shdr dynsym_shdr, rel_plt_shdr;
     Elf32_Sym dyn_sym;
-    Elf32_Word dyn_sym_idx, mips_gotsym;
-    Elf32_Addr base_addr, got_addr, got_plt_addr;
+    Elf32_Word dyn_sym_idx, mips_gotsym, mips_local_gotno, rel_plt_idx;
+    Elf32_Addr base_addr, got_addr, got_plt_addr, func_ptr_offset, func_offset;
+    Elf32_Rel r_mips_jump_slot_rel;
     char *dynstr_table = NULL;
 
     if (argc < 3)
@@ -157,6 +158,18 @@ int main(int argc, char *argv[])
             return err;
     }
 
+    switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_MIPS_LOCAL_GOTNO, &dynamic_tag))) {
+        case ORC_SUCCESS:
+            mips_local_gotno = be32toh(dynamic_tag.d_un.d_val);
+            fprintf(stderr, "Found DT_MIPS_LOCAL_GOTNO: 0x%x\n", mips_local_gotno);
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_MIPS_LOCAL_GOTNO dynamic tag\n");
+            break;
+        default:
+            return err;
+    }
+
     if (IS_MIPS_NONPIC((&elf_hdr))) {
         if ((err = parse_rel_plt_from_dyn_seg(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), &rel_plt_shdr)))
             return err;
@@ -164,6 +177,9 @@ int main(int argc, char *argv[])
         rel_plt_shdr.sh_addr = be32toh(rel_plt_shdr.sh_addr);
         rel_plt_shdr.sh_entsize = be32toh(rel_plt_shdr.sh_entsize);
         rel_plt_shdr.sh_size = be32toh(rel_plt_shdr.sh_size);
+        if ((err = calculate_file_offset(loadable_segments, num_loadable_segments, rel_plt_shdr.sh_addr, &rel_plt_shdr.sh_offset)) != ORC_SUCCESS)
+            return err;
+        rel_plt_shdr.sh_offset = be32toh(rel_plt_shdr.sh_offset);
 
         switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_MIPS_PLTGOT, &dynamic_tag))) {
             case ORC_SUCCESS:
@@ -198,6 +214,27 @@ int main(int argc, char *argv[])
         switch ((err = find_dynamic_symbol(handle, argv[i], dynstr_table, &dynsym_shdr, &dyn_sym, &dyn_sym_idx)))
         {
         case ORC_SUCCESS:
+            if (dyn_sym_idx < mips_gotsym) {
+                if (IS_MIPS_NONPIC((&elf_hdr)) && find_r_mips_jump_slot_rel(handle, &rel_plt_shdr, dyn_sym_idx, &r_mips_jump_slot_rel, &rel_plt_idx) == ORC_SUCCESS) {
+                    /*
+                        Alternatively, we could calculate using just the rel index - without the actual rel offset - like so:
+                        func_ptr_offset = got_plt_addr + (sizeof(Elf32_Addr) * (rel_plt_idx + 2)),
+                        as per the MIPS non PIC ABI "Procedure Linkage Table" section
+                    */
+                    func_ptr_offset = be32toh(r_mips_jump_slot_rel.r_offset);
+                }
+                else {
+                    /*
+                        this is a dynamic symbol that is NOT GOT mapped (see Symbols section in MIPS-ABI.pdf)
+                        I honestly have no idea why this is a thing, the MIPS-ABI.pdf does not make it clear.
+                    */
+                    func_offset = be32toh(dyn_sym.st_value);
+                }
+            }
+            else {
+                func_ptr_offset = got_addr + (((dyn_sym_idx - mips_gotsym) + mips_local_gotno) * sizeof(Elf32_Addr));
+            }
+            fprintf(stderr, "%s address pointer: 0x%x\n", argv[i], func_ptr_offset);
             break;
         case ORC_SYM_NOT_FOUND:
             break;
