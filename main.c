@@ -82,6 +82,15 @@ enum ORCError parse_dynamic_relocation_section(
 enum ORCError zero_elfhdr_sh(FILE *handle, Elf32_Ehdr *elf_hdr);
 static enum ORCError _add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh);
 enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_info *s_info);
+enum ORCError parse_gnu_version_requirements_section(
+    FILE *handle,
+    Elf32_Off dyn_seg_offset,
+    Elf32_Word dyn_seg_size,
+    Elf32_Phdr *loadable_segs,
+    Elf32_Half num_loadable_segs,
+    struct section_info *s_info,
+    Elf32_Word dynstr_idx
+);
 
 int main(int argc, char *argv[])
 {
@@ -400,7 +409,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     TODO: fill in missing sht_addralign
    */
     enum ORCError err;
-    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, got = { 0 }, rld_map = { 0 }, mips_stubs = { 0 }, hash = { 0 }, gnu_version = { 0 }, gnu_version_r = { 0 };
+    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, got = { 0 }, rld_map = { 0 }, mips_stubs = { 0 }, hash = { 0 }, gnu_version = { 0 };
     Elf32_Dyn dynamic_tag;
     Elf32_Addr base_addr = 0, got_entry;
     Elf32_Off dyn_seg_offset = be32toh(dyn_seg->p_offset), got_off, dynsym_off;
@@ -555,24 +564,8 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
             return err;
     }
 
-    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_VERSYM, &dynamic_tag))) {
-        case ORC_SUCCESS: /* https://refspecs.linuxfoundation.org/LSB_3.0.0/LSB-PDA/LSB-PDA.junk/symversion.html */
-            gnu_version.sh_addr = dynamic_tag.d_un.d_ptr;
-            gnu_version.sh_addralign = gnu_version.sh_entsize = htobe32(sizeof(Elf32_Half));
-            gnu_version.sh_flags = htobe32(SHF_ALLOC);
-            gnu_version.sh_link = htobe32(dynsym_idx);
-            gnu_version.sh_size = htobe32(symtabno * sizeof(Elf32_Half));
-            gnu_version.sh_type = htobe32(SHT_GNU_versym);
-            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(gnu_version.sh_addr), &gnu_version.sh_offset)) != ORC_SUCCESS)
-                return err;
-            if ((err = add_section_header(s_info, ".gnu.version", &gnu_version)) != ORC_SUCCESS)
-                return err;
-            break;
-        case ORC_DYN_TAG_NOT_FOUND:
-            fprintf(stderr, "Failed to find DT_VERSYM dynamic tag\n");
-        default:
-            return err;
-    }
+    if ((err = parse_gnu_version_requirements_section(handle, dyn_seg_offset, dyn_seg_size, loadable_segs, num_loadable_segs, s_info, dynstr_idx)) != ORC_SUCCESS)
+        return err;
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_HASH, &dynamic_tag))) {
         case ORC_SUCCESS:
@@ -1036,4 +1029,54 @@ enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_
         fprintf(stderr, "CSV header %u %s\n", node->index, node->name);
     return ORC_SUCCESS;
 
+}
+
+
+enum ORCError parse_gnu_version_requirements_section(
+    FILE *handle,
+    Elf32_Off dyn_seg_offset,
+    Elf32_Word dyn_seg_size,
+    Elf32_Phdr *loadable_segs,
+    Elf32_Half num_loadable_segs,
+    struct section_info *s_info,
+    Elf32_Word dynstr_idx
+)
+{
+    enum ORCError err;
+    Elf32_Dyn dynamic_tag;
+    Elf32_Shdr section_header = { 0 };
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_VERNEED, &dynamic_tag))) {
+        case ORC_SUCCESS: /* https://refspecs.linuxfoundation.org/LSB_3.0.0/LSB-PDA/LSB-PDA.junk/symversion.html */
+            section_header.sh_addr = dynamic_tag.d_un.d_ptr;
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_VERNEED dynamic tag\n");
+        default:
+            return err;
+    }
+
+    section_header.sh_addralign = htobe32(sizeof(Elf32_Word));
+    section_header.sh_flags = htobe32(SHF_ALLOC);
+    section_header.sh_link = htobe32(dynstr_idx);
+    section_header.sh_type = htobe32(SHT_GNU_verneed);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(section_header.sh_addr), &section_header.sh_offset)) != ORC_SUCCESS)
+        return err;
+
+    switch (find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_VERNEEDNUM, &dynamic_tag)) {
+        case ORC_SUCCESS: /* https://refspecs.linuxfoundation.org/LSB_3.0.0/LSB-PDA/LSB-PDA.junk/symversion.html */
+            section_header.sh_info = dynamic_tag.d_un.d_val;
+            if ((err = parse_gnu_version_requirements_size(handle, be32toh(section_header.sh_offset), be32toh(dynamic_tag.d_un.d_val), &section_header.sh_size)) != ORC_SUCCESS)
+                return err;
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_VERNEEDNUM dynamic tag\n");
+        default:
+            return ORC_INVALID_ELF;
+    }
+
+    if ((err = add_section_header(s_info, ".gnu.version_r", &section_header)) != ORC_SUCCESS)
+        return err;
+
+    return ORC_SUCCESS;
 }

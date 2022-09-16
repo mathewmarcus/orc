@@ -383,3 +383,34 @@ enum ORCError find_r_mips_jump_slot_rel(FILE *handle, Elf32_Shdr *rel_plt, Elf32
 
     return ORC_REL_NOT_FOUND;
 }
+
+
+/* https://refspecs.linuxfoundation.org/LSB_3.0.0/LSB-PDA/LSB-PDA.junk/symversion.html */
+enum ORCError parse_gnu_version_requirements_size(FILE *handle, Elf32_Off offset, Elf32_Word verneednum, Elf32_Word *size) {
+    Elf32_Verneed verneed;
+
+    *size = verneednum * sizeof(Elf32_Verneed);
+
+    while (verneednum--)
+    {
+        if (fseek(handle, offset, SEEK_SET) == -1) {
+            fprintf(stderr, "Failed to seek to next verneed in .gnu.version_r section at offset %u: %s\n", offset, strerror(errno));
+            return ORC_CRITICIAL;
+        }
+        if (fread(&verneed, sizeof(Elf32_Verneed), 1, handle) != 1) {
+            if (ferror(handle)) {
+                fprintf(stderr, "Failed to verneed in .gnu.version_r at offset\n");
+                return ORC_FILE_IO_ERR;
+            }
+            fprintf(stderr, "Invalid .gnu.version_r section\n");
+            return ORC_INVALID_ELF;
+        }
+        
+        *size += be16toh(verneed.vn_cnt) * sizeof(Elf32_Vernaux);
+        offset = offset + be32toh(verneed.vn_next);
+    }
+
+    *size = htobe32(*size);
+    return ORC_SUCCESS;
+
+}
