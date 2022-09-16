@@ -400,7 +400,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     TODO: fill in missing sht_addralign
    */
     enum ORCError err;
-    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, got = { 0 }, rld_map = { 0 }, mips_stubs = { 0 }, hash = { 0 };
+    Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, got = { 0 }, rld_map = { 0 }, mips_stubs = { 0 }, hash = { 0 }, gnu_version = { 0 }, gnu_version_r = { 0 };
     Elf32_Dyn dynamic_tag;
     Elf32_Addr base_addr = 0, got_entry;
     Elf32_Off dyn_seg_offset = be32toh(dyn_seg->p_offset), got_off, dynsym_off;
@@ -536,6 +536,43 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         return err;
     }
 
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_VERSYM, &dynamic_tag))) {
+        case ORC_SUCCESS: /* https://refspecs.linuxfoundation.org/LSB_3.0.0/LSB-PDA/LSB-PDA.junk/symversion.html */
+            gnu_version.sh_addr = dynamic_tag.d_un.d_ptr;
+            gnu_version.sh_addralign = gnu_version.sh_entsize = htobe32(sizeof(Elf32_Half));
+            gnu_version.sh_flags = htobe32(SHF_ALLOC);
+            gnu_version.sh_link = htobe32(dynsym_idx);
+            gnu_version.sh_size = htobe32(symtabno * sizeof(Elf32_Half));
+            gnu_version.sh_type = htobe32(SHT_GNU_versym);
+            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(gnu_version.sh_addr), &gnu_version.sh_offset)) != ORC_SUCCESS)
+                return err;
+            if ((err = add_section_header(s_info, ".gnu.version", &gnu_version)) != ORC_SUCCESS)
+                return err;
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_VERSYM dynamic tag\n");
+        default:
+            return err;
+    }
+
+    switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_VERSYM, &dynamic_tag))) {
+        case ORC_SUCCESS: /* https://refspecs.linuxfoundation.org/LSB_3.0.0/LSB-PDA/LSB-PDA.junk/symversion.html */
+            gnu_version.sh_addr = dynamic_tag.d_un.d_ptr;
+            gnu_version.sh_addralign = gnu_version.sh_entsize = htobe32(sizeof(Elf32_Half));
+            gnu_version.sh_flags = htobe32(SHF_ALLOC);
+            gnu_version.sh_link = htobe32(dynsym_idx);
+            gnu_version.sh_size = htobe32(symtabno * sizeof(Elf32_Half));
+            gnu_version.sh_type = htobe32(SHT_GNU_versym);
+            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(gnu_version.sh_addr), &gnu_version.sh_offset)) != ORC_SUCCESS)
+                return err;
+            if ((err = add_section_header(s_info, ".gnu.version", &gnu_version)) != ORC_SUCCESS)
+                return err;
+            break;
+        case ORC_DYN_TAG_NOT_FOUND:
+            fprintf(stderr, "Failed to find DT_VERSYM dynamic tag\n");
+        default:
+            return err;
+    }
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_HASH, &dynamic_tag))) {
         case ORC_SUCCESS:
