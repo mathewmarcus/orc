@@ -4,15 +4,20 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <endian.h>
+#include <getopt.h>
 
 #include "orc.h"
 
-#define USAGE "%s elf-file\n"
+#define USAGE "%s [ -S section_headers_csv ] elf-file\n"
 #define SHT_MIPS_ABIFLAGS 0x7000002a /* This is not included in elf.h */
+/* Nr,Name,Type,Addr,Offset,Size,EntSize,Flags,Link,Info,Alignment */
+#define CSV_FORMAT_STR "%hu,%m[^,],%u,0x%08x,0x%08x,%u,%u,%u,%u,%u,%u\n"
 /*
     TODO:
-        handle 64 bit
-        handle little endian
+        label section
+        .fdata .data
+        __RLD_MAP .rld_map
+        _fbss,__bss_start .bss
 */
 
 /*
@@ -24,8 +29,24 @@
 
     DT_MIPS_RLD_MAP .rld_map
 
-    musl-gcc -fno-PIC -mips16 hello_world.c -mno-abicalls -L/mnt/unifi/lib/ -o hello_world16e_nopic
+    For nonPIC (with PLT):
+    musl-gcc -fno-PIC -mips16 hello_world.c -mno-abicalls -o hello_world16e_nopic
+
+    For nonPIC (with PLT) and partial RELRO (both .got and .got.plt are writable):
+    musl-gcc -z relro -fno-PIC -mips16 hello_world.c -mno-abicalls -o hello_world16e_nopic
+
+    For nonPIC (with PLT) and "full" RELRO (only .got is writable):
+    musl-gcc -z relro -z now -fno-PIC -mips16 hello_world.c -mno-abicalls -o hello_world16e_nopic
 */
+
+struct csv_section_header {
+    Elf32_Half index;
+    char *name;
+    Elf32_Shdr header;
+
+    struct csv_section_header *prev;
+    struct csv_section_header *next;
+};
 
 struct section_info {
    Elf32_Shdr *headers;
@@ -33,6 +54,8 @@ struct section_info {
 
    uint8_t *shstrtab;
    size_t shstrtab_len;
+
+   struct csv_section_header *csv_headers;
 };
 
 enum ORCError add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh);
@@ -57,7 +80,8 @@ enum ORCError parse_dynamic_relocation_section(
     Elf32_Word dynsym_idx
 );
 enum ORCError zero_elfhdr_sh(FILE *handle, Elf32_Ehdr *elf_hdr);
-
+static enum ORCError _add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh);
+enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_info *s_info);
 
 int main(int argc, char *argv[])
 {
@@ -67,28 +91,45 @@ int main(int argc, char *argv[])
     Elf32_Shdr null_section = { 0 }, interp = { 0 }, mips_abiflags = { 0 }, reginfo = { 0 };
     Elf32_Half num_loadable_segments, phdr_count;
     long file_size, shstrtab_offset = 0, sh_offset = 0;
-    int ret;
+    int ret, opt;
     enum ORCError err;
     struct section_info s_info = { 0 };
 
-    if (argc < 2)
+    opterr = 0;
+    while ((opt = getopt(argc, argv, "S:")) != -1)
+    {
+        switch (opt)
+        {
+        case 'S':
+            if (parse_section_header_csv(optarg, &s_info) != ORC_SUCCESS)
+                return 1;
+            break;
+        case '?':
+        default:
+            fprintf(stderr, USAGE, argv[0]);
+            return 1;
+        }
+    }
+    
+
+    if (argc - optind != 1)
     {
         fprintf(stderr, USAGE, argv[0]);
         return 1;
     }
 
-    if (!(handle = fopen(argv[1], "r+")))
+    if (!(handle = fopen(argv[optind], "r+")))
     {
-        fprintf(stderr, "Failed to open %s: %s\n", argv[1], strerror(errno));
+        fprintf(stderr, "Failed to open %s: %s\n", argv[optind], strerror(errno));
         return 1;
     }
 
     if (fread(&elf_header, sizeof(Elf32_Ehdr), 1, handle) != 1)
     {
         if (ferror(handle))
-            fprintf(stderr, "Failed to read ELF header from %s\n", argv[1]);
+            fprintf(stderr, "Failed to read ELF header from %s\n", argv[optind]);
         else
-            fprintf(stderr, "No ELF header found in %s\n", argv[1]);
+            fprintf(stderr, "No ELF header found in %s\n", argv[optind]);
 
         fclose(handle);
         return 1;
@@ -100,7 +141,7 @@ int main(int argc, char *argv[])
     }
 
     if (elf_header.e_shoff || elf_header.e_shnum) {
-        fprintf(stderr, "%s already contains %hu section headers at offset 0x%x\n", argv[1], be16toh(elf_header.e_shnum), be32toh(elf_header.e_shoff));
+        fprintf(stderr, "%s already contains %hu section headers at offset 0x%x\n", argv[optind], be16toh(elf_header.e_shnum), be32toh(elf_header.e_shoff));
         goto err_exit;
     }
 
@@ -195,18 +236,18 @@ int main(int argc, char *argv[])
 
     if (fseek(handle, 0L, SEEK_END) == -1 || (file_size = ftell(handle)) == -1)
     {
-        fprintf(stderr, "Failed to obtain file size of %s: %s\n", argv[1], strerror(errno));
+        fprintf(stderr, "Failed to obtain file size of %s: %s\n", argv[optind], strerror(errno));
         fclose(handle);
         return 1;
     }
-    fprintf(stderr, "File %s size: %li bytes\n", argv[1], file_size);
+    fprintf(stderr, "File %s size: %li bytes\n", argv[optind], file_size);
 
     if (file_size % 32)
     {
         shstrtab_offset = 32 - (file_size % 32);
         if (fseek(handle, shstrtab_offset, SEEK_CUR) == -1)
         {
-            fprintf(stderr, "Failed to seek to .shstrtab offset at %li in %s: %s\n", file_size + shstrtab_offset, argv[1], strerror(errno));
+            fprintf(stderr, "Failed to seek to .shstrtab offset at %li in %s: %s\n", file_size + shstrtab_offset, argv[optind], strerror(errno));
             fclose(handle);
             return 1;
         }
@@ -229,11 +270,11 @@ int main(int argc, char *argv[])
 
     if (fwrite(s_info.shstrtab, s_info.shstrtab_len, 1, handle) != 1)
     {
-        fprintf(stderr, "Failed to write %lu byte .shstrtab to %s at offset %li\n", s_info.shstrtab_len, argv[1], file_size + shstrtab_offset);
+        fprintf(stderr, "Failed to write %lu byte .shstrtab to %s at offset %li\n", s_info.shstrtab_len, argv[optind], file_size + shstrtab_offset);
         fclose(handle);
         return 1;
     }
-    fprintf(stderr, "Wrote %lu byte .shstrtab to %s at offset %li\n", s_info.shstrtab_len, argv[1], file_size + shstrtab_offset);
+    fprintf(stderr, "Wrote %lu byte .shstrtab to %s at offset %li\n", s_info.shstrtab_len, argv[optind], file_size + shstrtab_offset);
 
     if (s_info.shstrtab_len % 4)
     {
@@ -244,7 +285,7 @@ int main(int argc, char *argv[])
                 stderr,
                 "Failed to seek to section header offset at %lu in %s: %s\n",
                 file_size + shstrtab_offset + s_info.shstrtab_len + sh_offset,
-                argv[1],
+                argv[optind],
                 strerror(errno)
             );
             fclose(handle);
@@ -255,7 +296,7 @@ int main(int argc, char *argv[])
     fprintf(stderr, "%li\n", ftell(handle));
 
     if (fwrite(s_info.headers, sizeof(Elf32_Shdr), s_info.num_headers, handle) != s_info.num_headers) {
-        fprintf(stderr, "Failed to write %hu section headers to %s\n", s_info.num_headers, argv[1]);
+        fprintf(stderr, "Failed to write %hu section headers to %s\n", s_info.num_headers, argv[optind]);
         fclose(handle);
         return 1;
     }
@@ -266,13 +307,13 @@ int main(int argc, char *argv[])
     elf_header.e_shstrndx = htobe16(s_info.num_headers - 1);
 
     if (fseek(handle, 0, SEEK_SET) == -1) {
-        fprintf(stderr, "Failed to seek to beginning of %s: %s\n", argv[1], strerror(errno));
+        fprintf(stderr, "Failed to seek to beginning of %s: %s\n", argv[optind], strerror(errno));
         fclose(handle);
         return 1;
     }
 
     if (fwrite(&elf_header, sizeof(Elf32_Ehdr), 1, handle) != 1) {
-        fprintf(stderr, "Failed to write updated ELF header to %s\n", argv[1]);
+        fprintf(stderr, "Failed to write updated ELF header to %s\n", argv[optind]);
         fclose(handle);
         return 1;
     }
@@ -293,6 +334,26 @@ cleanup:
 }
 
 enum ORCError add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh) {
+    enum ORCError err;
+    struct csv_section_header *node;
+
+    for (struct csv_section_header *node = s_info->csv_headers; node != NULL; node = node->next) {
+        if (s_info->num_headers != node->index)
+            continue;
+        
+        if ((err = _add_section_header(s_info, node->name, &node->header)) != ORC_SUCCESS)
+            return err;
+
+        // if (node->prev)
+        //     node->prev->next = node->next;
+        // if (node->next)
+        //     node->next->prev = node->prev;
+        // free(node);
+    }
+    return _add_section_header(s_info, name, sh);
+}
+
+static enum ORCError _add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh) {
     size_t name_len;
 
     name_len = strlen(name) + 1; /* plus terminating \0 */
@@ -637,7 +698,6 @@ enum ORCError parse_mips_nonpic(
 ) {
     Elf32_Shdr rel_plt = { 0 }, got_plt = { 0 }, plt = { 0 };
     Elf32_Dyn dynamic_tag;
-    Elf32_Word plt_idx;
     enum ORCError err;
 
     /*
@@ -732,11 +792,10 @@ enum ORCError parse_mips_nonpic(
     plt.sh_size = htobe32(((num_jump_slot_relocs > 65535 ? 32 : 16) * num_jump_slot_relocs) + 32);
     plt.sh_type = htobe32(SHT_PROGBITS);
 
-    plt_idx = s_info->num_headers;
     if ((err = add_section_header(s_info, ".plt", &plt)) != ORC_SUCCESS)
         return err;
 
-    rel_plt.sh_info = htobe32(plt_idx);
+    rel_plt.sh_info = htobe32(s_info->num_headers - 1);
     if ((err = add_section_header(s_info, ".rel.plt", &rel_plt)) != ORC_SUCCESS)
         return err;
 
@@ -839,4 +898,105 @@ enum ORCError parse_dynamic_relocation_section(
         return err;
 
     return ORC_SUCCESS;
+}
+
+
+enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_info *s_info) {
+    FILE *handle;
+    int matches;
+    char *section_name;
+    Elf32_Shdr sh;
+    Elf32_Addr end;
+    Elf32_Half section_num;
+    struct csv_section_header *node, *temp;
+
+    if (!(handle = fopen(csv_filepath, "r")))
+    {
+        fprintf(stderr, "Failed to open %s: %s\n", csv_filepath, strerror(errno));
+        return ORC_FILE_NOT_FOUND;
+    }
+
+    if (!(node = malloc(sizeof(struct csv_section_header)))) {
+        fprintf(stderr, "Failed to allocate head of CSV section header linked-list: %s\n", strerror(errno));
+        return ORC_CRITICIAL;
+    }
+    node->next = NULL;
+    
+    while ((matches = fscanf(
+        handle,
+        CSV_FORMAT_STR,
+        &node->index,
+        &node->name,
+        &node->header.sh_type,
+        &node->header.sh_addr,
+        &node->header.sh_offset,
+        &node->header.sh_size,
+        &node->header.sh_entsize,
+        &node->header.sh_flags,
+        &node->header.sh_link,
+        &node->header.sh_info,
+        &node->header.sh_addralign
+    )) == 11) 
+    {
+        node->header.sh_type = htobe32(node->header.sh_type);
+        node->header.sh_addr = htobe32(node->header.sh_addr);
+        node->header.sh_offset = htobe32(node->header.sh_offset);
+        node->header.sh_size = htobe32(node->header.sh_size);
+        node->header.sh_entsize = htobe32(node->header.sh_entsize);
+        node->header.sh_flags = htobe32(node->header.sh_flags);
+        node->header.sh_link = htobe32(node->header.sh_link);
+        node->header.sh_info = htobe32(node->header.sh_info);
+        node->header.sh_addralign = htobe32(node->header.sh_addralign);
+
+        node->prev = NULL;
+        while (node->next && node->index > node->next->index)
+        {
+            if (node->prev != NULL)
+                node->prev->next = node->next;
+
+            temp = node->prev;
+            node->prev = node->next;
+            node->next->prev = temp;
+
+            temp = node->next->next;
+            node->next->next = node;
+            node->next = temp;
+
+            if (node->next)
+                node->next->prev = node;
+
+            // fprintf(stderr, "curr: %hu, next: %p\n", node->index, node->next);
+        }
+
+        while (node->prev) {
+            node = node->prev;
+        }
+        fprintf(stderr, "\n");
+
+        if (!(node->prev = malloc(sizeof(struct csv_section_header)))) {
+            fprintf(stderr, "Failed to allocate node in CSV section header linked-list: %s\n", strerror(errno));
+            return ORC_CRITICIAL;
+        }
+        node->prev->next = node;
+        node = node->prev;
+    }
+    if (node->next)
+        node->next->prev = NULL;
+    s_info->csv_headers = node->next;
+    free(node);
+
+    
+    if (matches != EOF) {
+        fprintf(stderr, "Failed to parse section headers from %s: only matches %i of 10 expected columns\n", csv_filepath, matches);
+        return ORC_SECTION_HEADER_CSV_FORMAT_ERR;
+    }
+    else if (ferror(handle)) {
+        fprintf(stderr, "IO error when parsing section headers from %s\n", csv_filepath);
+        return ORC_FILE_IO_ERR;
+    }
+
+    for (struct csv_section_header *node = s_info->csv_headers; node != NULL; node = node->next)
+        fprintf(stderr, "CSV header %u %s\n", node->index, node->name);
+    return ORC_SUCCESS;
+
 }
