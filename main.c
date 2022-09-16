@@ -460,9 +460,9 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     dynstr.sh_type = htobe32(SHT_STRTAB);
     dynstr.sh_flags = htobe32(SHF_ALLOC);
 
-    dynstr_idx = s_info->num_headers;
     if ((err = add_section_header(s_info, ".dynstr", &dynstr)) != ORC_SUCCESS)
         return err;
+    dynstr_idx = s_info->num_headers - 1;
 
     dynamic.sh_addr = dyn_seg->p_vaddr;
     dynamic.sh_addralign = dyn_seg->p_align;
@@ -528,9 +528,9 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     */
     dynsym.sh_info = htobe32(1);
 
-    dynsym_idx = s_info->num_headers;
     if ((err = add_section_header(s_info, ".dynsym", &dynsym)) != ORC_SUCCESS)
         return err;
+    dynsym_idx = s_info->num_headers - 1;
 
     if ((err = parse_dynamic_relocation_section(
         handle,
