@@ -270,7 +270,6 @@ int main(int argc, char *argv[])
     shstrtab_header.sh_name = htobe32(s_info.num_headers - 1);
     shstrtab_header.sh_type = htobe32(SHT_STRTAB);
     shstrtab_header.sh_offset = htobe32(file_size + shstrtab_offset);
-    shstrtab_header.sh_size = htobe32(s_info.shstrtab_len + strlen(".shstrtab") + 1); /* plus terminating \0 */
     shstrtab_header.sh_addralign = htobe32(1);
 
     if (add_section_header(&s_info, ".shstrtab", &shstrtab_header))
@@ -358,6 +357,9 @@ enum ORCError add_section_header(struct section_info *s_info, const char *name, 
         // if (node->next)
         //     node->next->prev = node->prev;
         // free(node);
+    }
+    if (!strcmp(name, ".shstrtab")) {
+        sh->sh_size = htobe32(s_info->shstrtab_len + strlen(".shstrtab") + 1); /* plus terminating \0 */
     }
     return _add_section_header(s_info, name, sh);
 }
