@@ -46,6 +46,9 @@ struct csv_section_header {
 
     struct csv_section_header *prev;
     struct csv_section_header *next;
+
+    const char *info;
+    const char *link;
 };
 
 struct section_info {
@@ -58,7 +61,7 @@ struct section_info {
    struct csv_section_header *csv_headers;
 };
 
-enum ORCError add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh);
+enum ORCError add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh, const char *link, const char *info);
 enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info, Elf32_Ehdr *elf_hdr);
 enum ORCError parse_mips_nonpic(
     FILE *handle,
@@ -66,9 +69,7 @@ enum ORCError parse_mips_nonpic(
     Elf32_Word dyn_seg_size,
     Elf32_Phdr *loadable_segs,
     Elf32_Half num_loadable_segs,
-    struct section_info *s_info,
-    Elf32_Addr base_addr,
-    Elf32_Word dynsym_idx
+    struct section_info *s_info
 );
 enum ORCError parse_dynamic_relocation_section(
     FILE *handle,
@@ -76,11 +77,9 @@ enum ORCError parse_dynamic_relocation_section(
     Elf32_Word dyn_seg_size,
     Elf32_Phdr *loadable_segs,
     Elf32_Half num_loadable_segs,
-    struct section_info *s_info,
-    Elf32_Word dynsym_idx
+    struct section_info *s_info
 );
 enum ORCError zero_elfhdr_sh(FILE *handle, Elf32_Ehdr *elf_hdr);
-static enum ORCError _add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh);
 enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_info *s_info);
 enum ORCError parse_gnu_version_requirements_section(
     FILE *handle,
@@ -88,9 +87,9 @@ enum ORCError parse_gnu_version_requirements_section(
     Elf32_Word dyn_seg_size,
     Elf32_Phdr *loadable_segs,
     Elf32_Half num_loadable_segs,
-    struct section_info *s_info,
-    Elf32_Word dynstr_idx
+    struct section_info *s_info
 );
+enum ORCError build_section_headers(struct section_info *s_info);
 
 int main(int argc, char *argv[])
 {
@@ -103,6 +102,7 @@ int main(int argc, char *argv[])
     int ret, opt;
     enum ORCError err;
     struct section_info s_info = { 0 };
+    char *csv_file = NULL;
 
     opterr = 0;
     while ((opt = getopt(argc, argv, "S:")) != -1)
@@ -110,8 +110,7 @@ int main(int argc, char *argv[])
         switch (opt)
         {
         case 'S':
-            if (parse_section_header_csv(optarg, &s_info) != ORC_SUCCESS)
-                return 1;
+            csv_file = optarg;
             break;
         case '?':
         default:
@@ -154,7 +153,7 @@ int main(int argc, char *argv[])
         goto err_exit;
     }
 
-    if (add_section_header(&s_info, "", &null_section) != ORC_SUCCESS)
+    if (add_section_header(&s_info, "", &null_section, NULL, NULL) != ORC_SUCCESS)
        goto err_exit;
 
     /* parse program header info */
@@ -175,7 +174,7 @@ int main(int argc, char *argv[])
             interp.sh_offset = seg->p_offset;
             interp.sh_size = seg->p_filesz;
             interp.sh_type = htobe32(SHT_PROGBITS);
-            if (add_section_header(&s_info, ".interp", &interp) != ORC_SUCCESS)
+            if (add_section_header(&s_info, ".interp", &interp, NULL, NULL) != ORC_SUCCESS)
                 goto err_exit;
         case ORC_PHDR_NOT_FOUND:
             break;
@@ -196,7 +195,7 @@ int main(int argc, char *argv[])
             mips_abiflags.sh_offset = seg->p_offset;
             mips_abiflags.sh_size = seg->p_filesz;
             mips_abiflags.sh_type = htobe32(SHT_MIPS_ABIFLAGS);
-            if (add_section_header(&s_info, ".MIPS.abiflags", &mips_abiflags) != ORC_SUCCESS)
+            if (add_section_header(&s_info, ".MIPS.abiflags", &mips_abiflags, NULL, NULL) != ORC_SUCCESS)
                 goto err_exit;
         case ORC_PHDR_NOT_FOUND:
             break;
@@ -217,7 +216,7 @@ int main(int argc, char *argv[])
             reginfo.sh_offset = seg->p_offset;
             reginfo.sh_size = seg->p_filesz;
             reginfo.sh_type = htobe32(SHT_MIPS_REGINFO);
-            if (add_section_header(&s_info, ".reginfo", &reginfo) != ORC_SUCCESS)
+            if (add_section_header(&s_info, ".reginfo", &reginfo, NULL, NULL) != ORC_SUCCESS)
                 goto err_exit;
         case ORC_PHDR_NOT_FOUND:
             break;
@@ -263,6 +262,10 @@ int main(int argc, char *argv[])
     }
     fprintf(stderr, ".shstrtab offset: %li\n", file_size + shstrtab_offset);
 
+    if (csv_file)
+        if (parse_section_header_csv(csv_file, &s_info) != ORC_SUCCESS)
+            goto err_exit;
+
     /*
     .shstrtab
     */
@@ -270,19 +273,22 @@ int main(int argc, char *argv[])
     shstrtab_header.sh_name = htobe32(s_info.num_headers - 1);
     shstrtab_header.sh_type = htobe32(SHT_STRTAB);
     shstrtab_header.sh_offset = htobe32(file_size + shstrtab_offset);
+    shstrtab_header.sh_size = htobe32(s_info.shstrtab_len + strlen(".shstrtab") + 1); /* plus terminating \0 */
     shstrtab_header.sh_addralign = htobe32(1);
 
-    if (add_section_header(&s_info, ".shstrtab", &shstrtab_header))
+    if (add_section_header(&s_info, ".shstrtab", &shstrtab_header, NULL, NULL))
         goto err_exit;
 
+    if (build_section_headers(&s_info) != ORC_SUCCESS)
+        goto err_exit;
 
     if (fwrite(s_info.shstrtab, s_info.shstrtab_len, 1, handle) != 1)
     {
-        fprintf(stderr, "Failed to write %lu byte .shstrtab to %s at offset %li\n", s_info.shstrtab_len, argv[optind], file_size + shstrtab_offset);
+        fprintf(stderr, "Failed to write %lu byte .shstrtab to %s at offset 0x%lx\n", s_info.shstrtab_len, argv[optind], file_size + shstrtab_offset);
         fclose(handle);
         return 1;
     }
-    fprintf(stderr, "Wrote %lu byte .shstrtab to %s at offset %li\n", s_info.shstrtab_len, argv[optind], file_size + shstrtab_offset);
+    fprintf(stderr, "Wrote %lu byte .shstrtab to %s at offset 0x%lx\n", s_info.shstrtab_len, argv[optind], file_size + shstrtab_offset);
 
     if (s_info.shstrtab_len % 4)
     {
@@ -291,7 +297,7 @@ int main(int argc, char *argv[])
         {
             fprintf(
                 stderr,
-                "Failed to seek to section header offset at %lu in %s: %s\n",
+                "Failed to seek to section header offset at 0x%lx in %s: %s\n",
                 file_size + shstrtab_offset + s_info.shstrtab_len + sh_offset,
                 argv[optind],
                 strerror(errno)
@@ -300,7 +306,7 @@ int main(int argc, char *argv[])
             return 1;
         }
     }
-    fprintf(stderr, "section header offset: %li\n", file_size + shstrtab_offset + s_info.shstrtab_len + sh_offset);
+    fprintf(stderr, "section header offset: 0x%lx\n", file_size + shstrtab_offset + s_info.shstrtab_len + sh_offset);
     fprintf(stderr, "%li\n", ftell(handle));
 
     if (fwrite(s_info.headers, sizeof(Elf32_Shdr), s_info.num_headers, handle) != s_info.num_headers) {
@@ -341,30 +347,7 @@ cleanup:
     return ret;
 }
 
-enum ORCError add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh) {
-    enum ORCError err;
-    struct csv_section_header *node;
-
-    for (struct csv_section_header *node = s_info->csv_headers; node != NULL; node = node->next) {
-        if (s_info->num_headers != node->index)
-            continue;
-        
-        if ((err = _add_section_header(s_info, node->name, &node->header)) != ORC_SUCCESS)
-            return err;
-
-        // if (node->prev)
-        //     node->prev->next = node->next;
-        // if (node->next)
-        //     node->next->prev = node->prev;
-        // free(node);
-    }
-    if (!strcmp(name, ".shstrtab")) {
-        sh->sh_size = htobe32(s_info->shstrtab_len + strlen(".shstrtab") + 1); /* plus terminating \0 */
-    }
-    return _add_section_header(s_info, name, sh);
-}
-
-static enum ORCError _add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh) {
+enum ORCError add_shstrtab_entry(struct section_info *s_info, const char *name, Elf32_Shdr *sh) {
     size_t name_len;
 
     name_len = strlen(name) + 1; /* plus terminating \0 */
@@ -376,28 +359,96 @@ static enum ORCError _add_section_header(struct section_info *s_info, const char
     sh->sh_name = htobe32(s_info->shstrtab_len);
     s_info->shstrtab_len += name_len;
 
-    if (!(s_info->headers = reallocarray(s_info->headers, s_info->num_headers + 1, sizeof(Elf32_Shdr)))) {
-        fprintf(stderr, "Failed to allocate space for %s section header: %s\n", name, strerror(errno));
+    return ORC_SUCCESS;
+}
+
+enum ORCError add_section_header(struct section_info *s_info, const char *name, Elf32_Shdr *sh, const char *link, const char *info) {
+    enum ORCError err;
+    struct csv_section_header *node, *temp;
+
+    if ((err = add_shstrtab_entry(s_info, name, sh)) != ORC_SUCCESS)
+        return err;
+
+    if (!(node = malloc(sizeof(struct csv_section_header)))) {
+        fprintf(stderr, "Failed to allocate section header node for %s: %s\n", name, strerror(errno));
         return ORC_CRITICIAL;
     }
-    memcpy(s_info->headers + s_info->num_headers, sh, sizeof(Elf32_Shdr));
-    s_info->num_headers++;
+    memcpy(&node->header, sh, sizeof(Elf32_Shdr));
 
-    fprintf(
-        stderr,
-        "Added section header: %u\t%s\t%u\t0x%x\t0x%x\t0x%x\t0x%x\t%u\t%u\t%u\t%u\n",
-        be32toh(sh->sh_name),
-        name,
-        be32toh(sh->sh_type),
-        be32toh(sh->sh_addr),
-        be32toh(sh->sh_offset),
-        be32toh(sh->sh_size),
-        be32toh(sh->sh_entsize),
-        be32toh(sh->sh_flags),
-        be32toh(sh->sh_link),
-        be32toh(sh->sh_info),
-        be32toh(sh->sh_addralign)
-    );
+    node->name = strdup(name);
+    node->link = link;
+    node->info = info;
+    node->prev = NULL;
+    node->next = s_info->csv_headers;
+    if (s_info->csv_headers)
+        s_info->csv_headers->prev = node;
+
+    while (node->next && be32toh(node->header.sh_offset) > be32toh(node->next->header.sh_offset))
+    {
+        if (node->prev != NULL)
+            node->prev->next = node->next;
+
+        temp = node->prev;
+        node->prev = node->next;
+        node->next->prev = temp;
+
+        temp = node->next->next;
+        node->next->next = node;
+        node->next = temp;
+
+        if (node->next)
+            node->next->prev = node;
+    }
+
+    while (node->prev)
+        node = node->prev;
+
+    s_info->csv_headers = node;
+
+    return ORC_SUCCESS;
+}
+
+int find_referenced_section(struct section_info *s_info, const char *name) {
+    int idx = 0;
+
+    for (struct csv_section_header *node = s_info->csv_headers; node != NULL; node = node->next) {
+        if (!strcmp(name, node->name))
+            return idx;
+        idx++;
+    }
+
+    return -1;
+
+}
+
+enum ORCError build_section_headers(struct section_info *s_info) {
+    Elf32_Shdr *ptr;
+    int idx;
+    for (struct csv_section_header *node = s_info->csv_headers; node != NULL; node = node->next) {
+        if (node->info) {
+            if ((idx = find_referenced_section(s_info, node->info)) == -1)
+                fprintf(stderr, "Failed to find info section %s for section %s\n", node->info, node->name);
+            else
+                node->header.sh_info = htobe32(idx);
+
+        }
+        if (node->link) {
+            if ((idx = find_referenced_section(s_info, node->link)) == -1)
+                fprintf(stderr, "Failed to find link section %s for section %s\n", node->info, node->name);
+            else
+                node->header.sh_link = htobe32(idx);
+        }
+        s_info->num_headers++;
+    }
+
+    if (!(ptr = s_info->headers = calloc(s_info->num_headers, sizeof(Elf32_Shdr)))) {
+        fprintf(stderr, "Failed to allocate space for section headers: %s\n", strerror(errno));
+        return ORC_CRITICIAL;
+    }
+
+    for (struct csv_section_header *node = s_info->csv_headers; node != NULL; node = node->next)
+        memcpy(ptr++, &node->header, sizeof(Elf32_Shdr));
+
     return ORC_SUCCESS;
 }
 
@@ -415,7 +466,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     Elf32_Dyn dynamic_tag;
     Elf32_Addr base_addr = 0, got_entry;
     Elf32_Off dyn_seg_offset = be32toh(dyn_seg->p_offset), got_off, dynsym_off;
-    Elf32_Word dyn_seg_size = be32toh(dyn_seg->p_filesz), syment, symtabno, dynstr_idx, dynsym_idx, mips_local_gotno, mips_gotsym, mips_external_gotno, mips_stub_count;
+    Elf32_Word dyn_seg_size = be32toh(dyn_seg->p_filesz), syment, symtabno, mips_local_gotno, mips_gotsym, mips_external_gotno, mips_stub_count;
     Elf32_Sym sym;
     /*
         TODO
@@ -462,9 +513,8 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     dynstr.sh_type = htobe32(SHT_STRTAB);
     dynstr.sh_flags = htobe32(SHF_ALLOC);
 
-    if ((err = add_section_header(s_info, ".dynstr", &dynstr)) != ORC_SUCCESS)
+    if ((err = add_section_header(s_info, ".dynstr", &dynstr, NULL, NULL)) != ORC_SUCCESS)
         return err;
-    dynstr_idx = s_info->num_headers - 1;
 
     dynamic.sh_addr = dyn_seg->p_vaddr;
     dynamic.sh_addralign = dyn_seg->p_align;
@@ -475,12 +525,11 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         dynamic.sh_flags |= htobe32(SHF_WRITE);
     if (dyn_seg->p_flags & htobe32(PF_X))
         dynamic.sh_flags |= htobe32(SHF_EXECINSTR);
-    dynamic.sh_link = htobe32(dynstr_idx);
     dynamic.sh_offset = dyn_seg->p_offset;
     dynamic.sh_size = dyn_seg->p_filesz; /* Practical Binary Analysis, 2.4.3 */
     dynamic.sh_type = htobe32(SHT_DYNAMIC);
 
-    if ((err = add_section_header(s_info, ".dynamic", &dynamic)) != ORC_SUCCESS)
+    if ((err = add_section_header(s_info, ".dynamic", &dynamic, ".dynstr", NULL)) != ORC_SUCCESS)
         return err;
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_SYMTAB, &dynamic_tag))) {
@@ -522,7 +571,6 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     dynsym.sh_flags = htobe32(SHF_ALLOC);
     dynsym.sh_size = htobe32(syment * symtabno);
     dynsym.sh_entsize = htobe32(syment);
-    dynsym.sh_link = htobe32(dynstr_idx);
     /*
         One greater than the symbol table index of the last local symbol. 
         https://docs.oracle.com/cd/E19455-01/806-3773/6jct9o0bs/index.html#elf-15226
@@ -530,9 +578,8 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     */
     dynsym.sh_info = htobe32(1);
 
-    if ((err = add_section_header(s_info, ".dynsym", &dynsym)) != ORC_SUCCESS)
+    if ((err = add_section_header(s_info, ".dynsym", &dynsym, ".dynstr", NULL)) != ORC_SUCCESS)
         return err;
-    dynsym_idx = s_info->num_headers - 1;
 
     if ((err = parse_dynamic_relocation_section(
         handle,
@@ -540,8 +587,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         dyn_seg_size,
         loadable_segs,
         num_loadable_segs,
-        s_info,
-        dynsym_idx)) != ORC_SUCCESS) {
+        s_info)) != ORC_SUCCESS) {
 
         fprintf(stderr, "Failed to parse dynamic relocation section\n");
         return err;
@@ -552,12 +598,11 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
             gnu_version.sh_addr = dynamic_tag.d_un.d_ptr;
             gnu_version.sh_addralign = gnu_version.sh_entsize = htobe32(sizeof(Elf32_Half));
             gnu_version.sh_flags = htobe32(SHF_ALLOC);
-            gnu_version.sh_link = htobe32(dynsym_idx);
             gnu_version.sh_size = htobe32(symtabno * sizeof(Elf32_Half));
             gnu_version.sh_type = htobe32(SHT_GNU_versym);
             if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(gnu_version.sh_addr), &gnu_version.sh_offset)) != ORC_SUCCESS)
                 return err;
-            if ((err = add_section_header(s_info, ".gnu.version", &gnu_version)) != ORC_SUCCESS)
+            if ((err = add_section_header(s_info, ".gnu.version", &gnu_version, ".dynsym", NULL)) != ORC_SUCCESS)
                 return err;
             break;
         case ORC_DYN_TAG_NOT_FOUND:
@@ -566,7 +611,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
             return err;
     }
 
-    if ((err = parse_gnu_version_requirements_section(handle, dyn_seg_offset, dyn_seg_size, loadable_segs, num_loadable_segs, s_info, dynstr_idx)) != ORC_SUCCESS)
+    if ((err = parse_gnu_version_requirements_section(handle, dyn_seg_offset, dyn_seg_size, loadable_segs, num_loadable_segs, s_info)) != ORC_SUCCESS)
         return err;
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_HASH, &dynamic_tag))) {
@@ -576,12 +621,11 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
             hash.sh_addr = dynamic_tag.d_un.d_ptr;
             hash.sh_addralign = hash.sh_entsize = htobe32(sizeof(Elf32_Addr));
             hash.sh_flags = htobe32(SHF_ALLOC);
-            hash.sh_link = htobe32(dynsym_idx);
             hash.sh_offset = dynamic_tag.d_un.d_ptr - htobe32(base_addr);
             if ((err = calculate_hash_size(handle, &hash)) != ORC_SUCCESS)
                 return err;
             hash.sh_type = htobe32(SHT_HASH);
-            if ((err = add_section_header(s_info, ".hash", &hash)) != ORC_SUCCESS)
+            if ((err = add_section_header(s_info, ".hash", &hash, ".dynsym", NULL)) != ORC_SUCCESS)
                 return err;
             break;
         case ORC_DYN_TAG_NOT_FOUND:
@@ -635,7 +679,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     got.sh_size = htobe32(((symtabno - mips_gotsym) + mips_local_gotno) * be32toh(got.sh_entsize));
     got.sh_type = htobe32(SHT_PROGBITS);
 
-    if ((err = add_section_header(s_info, ".got", &got)) != ORC_SUCCESS)
+    if ((err = add_section_header(s_info, ".got", &got, NULL, NULL)) != ORC_SUCCESS)
         return err;
 
 
@@ -650,7 +694,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
             rld_map.sh_size = htobe32(4); /* size of instruction */
             rld_map.sh_type = htobe32(SHT_PROGBITS);
 
-            if ((err = add_section_header(s_info, ".rld_map", &rld_map)) != ORC_SUCCESS)
+            if ((err = add_section_header(s_info, ".rld_map", &rld_map, NULL, NULL)) != ORC_SUCCESS)
                 return err;
             break;
         case ORC_DYN_TAG_NOT_FOUND:
@@ -667,9 +711,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
             dyn_seg_size,
             loadable_segs,
             num_loadable_segs,
-            s_info,
-            base_addr,
-            dynsym_idx
+            s_info
         );
         if (err != ORC_SUCCESS)
             return err;
@@ -710,7 +752,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         mips_stubs.sh_size = htobe32(sizeof(Elf32_Addr) * 4 * (mips_stub_count + 1)); /* are stubs always 4 instructions? are they always terminated with a null stub? */
         mips_stubs.sh_type = htobe32(SHT_PROGBITS);
 
-        if ((err = add_section_header(s_info, ".MIPS.stubs", &mips_stubs)) != ORC_SUCCESS)
+        if ((err = add_section_header(s_info, ".MIPS.stubs", &mips_stubs, NULL, NULL)) != ORC_SUCCESS)
             return err;
     }
 
@@ -724,9 +766,7 @@ enum ORCError parse_mips_nonpic(
     Elf32_Word dyn_seg_size,
     Elf32_Phdr *loadable_segs,
     Elf32_Half num_loadable_segs,
-    struct section_info *s_info,
-    Elf32_Addr base_addr,
-    Elf32_Word dynsym_idx
+    struct section_info *s_info
 ) {
     Elf32_Shdr rel_plt = { 0 }, got_plt = { 0 }, plt = { 0 };
     Elf32_Dyn dynamic_tag;
@@ -761,7 +801,6 @@ enum ORCError parse_mips_nonpic(
         https://docs.oracle.com/cd/E23824_01/html/819-0690/chapter6-94076.html
     */
     rel_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_INFO_LINK);
-    rel_plt.sh_link = htobe32(dynsym_idx);
     rel_plt.sh_type = htobe32(SHT_REL);
 
     Elf32_Word num_jump_slot_relocs;
@@ -780,7 +819,7 @@ enum ORCError parse_mips_nonpic(
     got_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE);
     got_plt.sh_entsize = htobe32(4); /* based on architecture address length */
 
-    if ((err = add_section_header(s_info, ".got.plt", &got_plt)) != ORC_SUCCESS)
+    if ((err = add_section_header(s_info, ".got.plt", &got_plt, NULL, NULL)) != ORC_SUCCESS)
         return err;
 
 
@@ -824,11 +863,10 @@ enum ORCError parse_mips_nonpic(
     plt.sh_size = htobe32(((num_jump_slot_relocs > 65535 ? 32 : 16) * num_jump_slot_relocs) + 32);
     plt.sh_type = htobe32(SHT_PROGBITS);
 
-    if ((err = add_section_header(s_info, ".plt", &plt)) != ORC_SUCCESS)
+    if ((err = add_section_header(s_info, ".plt", &plt, NULL, NULL)) != ORC_SUCCESS)
         return err;
 
-    rel_plt.sh_info = htobe32(s_info->num_headers - 1);
-    if ((err = add_section_header(s_info, ".rel.plt", &rel_plt)) != ORC_SUCCESS)
+    if ((err = add_section_header(s_info, ".rel.plt", &rel_plt, ".dynsym", ".plt")) != ORC_SUCCESS)
         return err;
 
     return ORC_SUCCESS;
@@ -859,8 +897,7 @@ enum ORCError parse_dynamic_relocation_section(
     Elf32_Word dyn_seg_size,
     Elf32_Phdr *loadable_segs,
     Elf32_Half num_loadable_segs,
-    struct section_info *s_info,
-    Elf32_Word dynsym_idx
+    struct section_info *s_info
 ) {
     enum ORCError err;
     Elf32_Dyn dynamic_tag;
@@ -923,10 +960,9 @@ enum ORCError parse_dynamic_relocation_section(
             return err;
     }
     section_hdr.sh_flags = htobe32(SHF_ALLOC);
-    section_hdr.sh_link = htobe32(dynsym_idx);
     if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(section_hdr.sh_addr), &section_hdr.sh_offset)) != ORC_SUCCESS)
         return err;
-    if ((err = add_section_header(s_info, sh_name, &section_hdr)) != ORC_SUCCESS)
+    if ((err = add_section_header(s_info, sh_name, &section_hdr, ".dynsym", NULL)) != ORC_SUCCESS)
         return err;
 
     return ORC_SUCCESS;
@@ -941,6 +977,7 @@ enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_
     Elf32_Addr end;
     Elf32_Half section_num;
     struct csv_section_header *node, *temp;
+    enum ORCError err;
 
     if (!(handle = fopen(csv_filepath, "r")))
     {
@@ -952,7 +989,9 @@ enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_
         fprintf(stderr, "Failed to allocate head of CSV section header linked-list: %s\n", strerror(errno));
         return ORC_CRITICIAL;
     }
-    node->next = NULL;
+    node->next = s_info->csv_headers;
+    if (s_info->csv_headers)
+        s_info->csv_headers->prev = node;
     
     while ((matches = fscanf(
         handle,
@@ -980,6 +1019,9 @@ enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_
         node->header.sh_info = htobe32(node->header.sh_info);
         node->header.sh_addralign = htobe32(node->header.sh_addralign);
 
+        if ((err = add_shstrtab_entry(s_info, node->name, &node->header)) != ORC_SUCCESS)
+            return err;
+
         node->prev = NULL;
         while (node->next && node->index > node->next->index)
         {
@@ -1000,10 +1042,8 @@ enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_
             // fprintf(stderr, "curr: %hu, next: %p\n", node->index, node->next);
         }
 
-        while (node->prev) {
+        while (node->prev)
             node = node->prev;
-        }
-        fprintf(stderr, "\n");
 
         if (!(node->prev = malloc(sizeof(struct csv_section_header)))) {
             fprintf(stderr, "Failed to allocate node in CSV section header linked-list: %s\n", strerror(errno));
@@ -1040,8 +1080,7 @@ enum ORCError parse_gnu_version_requirements_section(
     Elf32_Word dyn_seg_size,
     Elf32_Phdr *loadable_segs,
     Elf32_Half num_loadable_segs,
-    struct section_info *s_info,
-    Elf32_Word dynstr_idx
+    struct section_info *s_info
 )
 {
     enum ORCError err;
@@ -1060,7 +1099,6 @@ enum ORCError parse_gnu_version_requirements_section(
 
     section_header.sh_addralign = htobe32(sizeof(Elf32_Word));
     section_header.sh_flags = htobe32(SHF_ALLOC);
-    section_header.sh_link = htobe32(dynstr_idx);
     section_header.sh_type = htobe32(SHT_GNU_verneed);
     if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(section_header.sh_addr), &section_header.sh_offset)) != ORC_SUCCESS)
         return err;
@@ -1077,7 +1115,7 @@ enum ORCError parse_gnu_version_requirements_section(
             return ORC_INVALID_ELF;
     }
 
-    if ((err = add_section_header(s_info, ".gnu.version_r", &section_header)) != ORC_SUCCESS)
+    if ((err = add_section_header(s_info, ".gnu.version_r", &section_header, ".dynstr", NULL)) != ORC_SUCCESS)
         return err;
 
     return ORC_SUCCESS;
