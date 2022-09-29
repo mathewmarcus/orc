@@ -40,7 +40,6 @@
 */
 
 struct csv_section_header {
-    Elf32_Half index;
     char *name;
     Elf32_Shdr header;
 
@@ -975,7 +974,7 @@ enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_
     char *section_name;
     Elf32_Shdr sh;
     Elf32_Addr end;
-    Elf32_Half section_num;
+    Elf32_Half section_num, index;
     struct csv_section_header *node, *temp;
     enum ORCError err;
 
@@ -996,7 +995,7 @@ enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_
     while ((matches = fscanf(
         handle,
         CSV_FORMAT_STR,
-        &node->index,
+        &index,
         &node->name,
         &node->header.sh_type,
         &node->header.sh_addr,
@@ -1023,7 +1022,7 @@ enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_
             return err;
 
         node->prev = NULL;
-        while (node->next && node->index > node->next->index)
+        for (Elf32_Half i = 0; i < index && node->next; i++)
         {
             if (node->prev != NULL)
                 node->prev->next = node->next;
@@ -1038,8 +1037,6 @@ enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_
 
             if (node->next)
                 node->next->prev = node;
-
-            // fprintf(stderr, "curr: %hu, next: %p\n", node->index, node->next);
         }
 
         while (node->prev)
@@ -1067,10 +1064,7 @@ enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_
         return ORC_FILE_IO_ERR;
     }
 
-    for (struct csv_section_header *node = s_info->csv_headers; node != NULL; node = node->next)
-        fprintf(stderr, "CSV header %u %s\n", node->index, node->name);
     return ORC_SUCCESS;
-
 }
 
 
