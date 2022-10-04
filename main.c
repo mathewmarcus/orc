@@ -89,6 +89,7 @@ enum ORCError parse_gnu_version_requirements_section(
     struct section_info *s_info
 );
 enum ORCError build_section_headers(struct section_info *s_info);
+enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info);
 
 int main(int argc, char *argv[])
 {
@@ -240,6 +241,9 @@ int main(int argc, char *argv[])
         default:
             goto err_exit;
     }
+
+    if ((err = parse_sh_from_dynsym(handle, loadable_segments, num_loadable_segments, &s_info)) != ORC_SUCCESS)
+        goto err_exit;
 
     if (fseek(handle, 0L, SEEK_END) == -1 || (file_size = ftell(handle)) == -1)
     {
@@ -988,6 +992,7 @@ enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_
         fprintf(stderr, "Failed to allocate head of CSV section header linked-list: %s\n", strerror(errno));
         return ORC_CRITICIAL;
     }
+    node->link = node->info = NULL;
     node->next = s_info->csv_headers;
     if (s_info->csv_headers)
         s_info->csv_headers->prev = node;
@@ -1048,6 +1053,7 @@ enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_
         }
         node->prev->next = node;
         node = node->prev;
+        node->link = node->info = NULL;
     }
     if (node->next)
         node->next->prev = NULL;
@@ -1113,4 +1119,79 @@ enum ORCError parse_gnu_version_requirements_section(
         return err;
 
     return ORC_SUCCESS;
+}
+
+
+enum ORCError find_section_header(struct section_info *s_info, const char *section_name, Elf32_Shdr **section_header) {
+    for (struct csv_section_header *node = s_info->csv_headers; node != NULL; node = node->next) {
+        if (!strcmp(s_info->shstrtab + be32toh(node->header.sh_name), section_name)) {
+            *section_header = &node->header;
+            return ORC_SUCCESS;
+        }
+    }
+
+    fprintf(stderr, "header for section %s has not been parsed\n", section_name);
+    return ORC_SECTION_NOT_FOUND;
+}
+
+
+enum ORCError parse_data_section_header(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info, Elf32_Sym *fdata) {
+    struct csv_section_header *node;
+    Elf32_Shdr new = { 0 };
+    enum ORCError err;
+
+    new.sh_addralign = htobe32(16);
+    new.sh_addr = fdata->st_value;
+    new.sh_flags = htobe32(SHF_ALLOC | SHF_WRITE);
+    new.sh_type = htobe32(SHT_PROGBITS);
+
+    for (node = s_info->csv_headers; node != NULL && be32toh(node->header.sh_addr) < be32toh(fdata->st_value); node = node->next);
+
+    if (node)
+        new.sh_size = htobe32(be32toh(node->header.sh_addr) - be32toh(fdata->st_value));
+    else
+        new.sh_size = (be32toh(loadable_segs[num_loadable_segs - 1].p_vaddr) + be32toh(loadable_segs[num_loadable_segs - 1].p_memsz)) - be32toh(new.sh_addr);
+
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(new.sh_addr), &new.sh_offset)) != ORC_SUCCESS)
+        return err;
+
+    err = add_section_header(s_info, ".data", &new, NULL, NULL);
+    return err;
+}
+
+
+enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info) {
+    enum ORCError err;
+    char *dynstr = NULL;
+    Elf32_Shdr *dynsym_sh, *dynstr_sh;
+    Elf32_Sym sym;
+    Elf32_Word idx;
+
+    if ((err = find_section_header(s_info, ".dynsym", &dynsym_sh)) != ORC_SUCCESS)
+        goto cleanup;
+
+    if ((err = find_section_header(s_info, ".dynstr", &dynstr_sh)) != ORC_SUCCESS)
+        goto cleanup;
+
+    if ((err = read_dynstr_table(handle, dynstr_sh, &dynstr)) != ORC_SUCCESS)
+        goto cleanup;
+
+    /* .data */
+    switch ((err = find_dynamic_symbol(handle, "_fdata", STT_NOTYPE, dynstr, dynsym_sh, &sym, &idx))) {
+        case ORC_SUCCESS:
+            if ((err = parse_data_section_header(handle, loadable_segs, num_loadable_segs, s_info, &sym)))
+                goto cleanup;
+            break;
+        case ORC_SYM_NOT_FOUND:
+            break;
+        default:
+            goto cleanup;
+    }
+
+    err = ORC_SUCCESS;
+
+cleanup:
+    free(dynstr);
+
+    return err;
 }
