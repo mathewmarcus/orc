@@ -11,7 +11,8 @@
 #define USAGE "%s [ -S section_headers_csv ] elf-file\n"
 #define SHT_MIPS_ABIFLAGS 0x7000002a /* This is not included in elf.h */
 /* Nr,Name,Type,Addr,Offset,Size,EntSize,Flags,Link,Info,Alignment */
-#define CSV_FORMAT_STR "%hu,%m[^,],%u,0x%08x,0x%08x,%u,%u,%u,%u,%u,%u\n"
+#define CSV_FORMAT_STR "%m[^,],%u,0x%08x,0x%08x,%u,%u,%u,%u,%u,%u\n"
+#define NUM_DYNSYM_SECTION_LABELS 8
 /*
     TODO:
         label section
@@ -48,6 +49,15 @@ struct csv_section_header {
 
     const char *info;
     const char *link;
+};
+
+struct dynsym_section_label {
+    const char *name;
+
+    Elf32_Sym symbol;
+
+    struct dynsym_section_label *prev;
+    struct dynsym_section_label *next;
 };
 
 struct section_info {
@@ -90,6 +100,73 @@ enum ORCError parse_gnu_version_requirements_section(
 );
 enum ORCError build_section_headers(struct section_info *s_info);
 enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info);
+    
+static struct dynsym_section_label dynsym_section_labels[NUM_DYNSYM_SECTION_LABELS] = {
+    {
+        "_init",
+        {
+            0, STT_FUNC, 0, 0, 0, 0
+        },
+        NULL,
+        NULL
+    },
+    {
+        "_ftext",
+        {
+            0, STT_NOTYPE, 0, 0, 0, 0
+        },
+        NULL,
+        NULL
+    },
+    {
+        "_fini",
+        {
+            0, STT_FUNC, 0, 0, 0, 0
+        },
+        NULL,
+        NULL
+    },
+    {
+        "_fdata",
+        {
+            0, STT_NOTYPE, 0, 0, 0, 0
+        },
+        NULL,
+        NULL
+    },
+    {
+        "_edata",
+        {
+            0, STT_NOTYPE, 0, 0, 0, 0
+        },
+        NULL,
+        NULL
+    },
+    {
+        "__bss_start",
+        {
+            0, STT_NOTYPE, 0, 0, 0, 0
+        },
+        NULL,
+        NULL
+    },
+    {
+        "_fbss",
+        {
+            0, STT_NOTYPE, 0, 0, 0, 0
+        },
+        NULL,
+        NULL
+    },
+    {
+        "_end",
+        {
+            0, STT_NOTYPE, 0, 0, 0, 0
+        },
+        NULL,
+        NULL
+    }
+};
 
 int main(int argc, char *argv[])
 {
@@ -242,6 +319,10 @@ int main(int argc, char *argv[])
             goto err_exit;
     }
 
+    if (csv_file)
+        if (parse_section_header_csv(csv_file, &s_info) != ORC_SUCCESS)
+            goto err_exit;
+
     if ((err = parse_sh_from_dynsym(handle, loadable_segments, num_loadable_segments, &s_info)) != ORC_SUCCESS)
         goto err_exit;
 
@@ -264,10 +345,6 @@ int main(int argc, char *argv[])
         }
     }
     fprintf(stderr, ".shstrtab offset: %li\n", file_size + shstrtab_offset);
-
-    if (csv_file)
-        if (parse_section_header_csv(csv_file, &s_info) != ORC_SUCCESS)
-            goto err_exit;
 
     /*
     .shstrtab
@@ -975,102 +1052,67 @@ enum ORCError parse_dynamic_relocation_section(
 enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_info *s_info) {
     FILE *handle;
     int matches;
-    char *section_name;
-    Elf32_Shdr sh;
-    Elf32_Addr end;
+    char *section_name = NULL;
+    Elf32_Shdr header;
     Elf32_Half section_num, index;
-    struct csv_section_header *node, *temp;
     enum ORCError err;
 
     if (!(handle = fopen(csv_filepath, "r")))
     {
         fprintf(stderr, "Failed to open %s: %s\n", csv_filepath, strerror(errno));
-        return ORC_FILE_NOT_FOUND;
+        err = ORC_FILE_NOT_FOUND;
+        goto cleanup;
     }
-
-    if (!(node = malloc(sizeof(struct csv_section_header)))) {
-        fprintf(stderr, "Failed to allocate head of CSV section header linked-list: %s\n", strerror(errno));
-        return ORC_CRITICIAL;
-    }
-    node->link = node->info = NULL;
-    node->next = s_info->csv_headers;
-    if (s_info->csv_headers)
-        s_info->csv_headers->prev = node;
     
     while ((matches = fscanf(
         handle,
         CSV_FORMAT_STR,
-        &index,
-        &node->name,
-        &node->header.sh_type,
-        &node->header.sh_addr,
-        &node->header.sh_offset,
-        &node->header.sh_size,
-        &node->header.sh_entsize,
-        &node->header.sh_flags,
-        &node->header.sh_link,
-        &node->header.sh_info,
-        &node->header.sh_addralign
-    )) == 11) 
+        &section_name,
+        &header.sh_type,
+        &header.sh_addr,
+        &header.sh_offset,
+        &header.sh_size,
+        &header.sh_entsize,
+        &header.sh_flags,
+        &header.sh_link,
+        &header.sh_info,
+        &header.sh_addralign
+    )) == 10) 
     {
-        node->header.sh_type = htobe32(node->header.sh_type);
-        node->header.sh_addr = htobe32(node->header.sh_addr);
-        node->header.sh_offset = htobe32(node->header.sh_offset);
-        node->header.sh_size = htobe32(node->header.sh_size);
-        node->header.sh_entsize = htobe32(node->header.sh_entsize);
-        node->header.sh_flags = htobe32(node->header.sh_flags);
-        node->header.sh_link = htobe32(node->header.sh_link);
-        node->header.sh_info = htobe32(node->header.sh_info);
-        node->header.sh_addralign = htobe32(node->header.sh_addralign);
+        header.sh_type = htobe32(header.sh_type);
+        header.sh_addr = htobe32(header.sh_addr);
+        header.sh_offset = htobe32(header.sh_offset);
+        header.sh_size = htobe32(header.sh_size);
+        header.sh_entsize = htobe32(header.sh_entsize);
+        header.sh_flags = htobe32(header.sh_flags);
+        header.sh_link = htobe32(header.sh_link);
+        header.sh_info = htobe32(header.sh_info);
+        header.sh_addralign = htobe32(header.sh_addralign);
 
-        if ((err = add_shstrtab_entry(s_info, node->name, &node->header)) != ORC_SUCCESS)
-            return err;
+        if ((err = add_section_header(s_info, section_name, &header, NULL, NULL)) != ORC_SUCCESS)
+            goto cleanup;
 
-        node->prev = NULL;
-        for (Elf32_Half i = 0; i < index && node->next; i++)
-        {
-            if (node->prev != NULL)
-                node->prev->next = node->next;
-
-            temp = node->prev;
-            node->prev = node->next;
-            node->next->prev = temp;
-
-            temp = node->next->next;
-            node->next->next = node;
-            node->next = temp;
-
-            if (node->next)
-                node->next->prev = node;
-        }
-
-        while (node->prev)
-            node = node->prev;
-
-        if (!(node->prev = malloc(sizeof(struct csv_section_header)))) {
-            fprintf(stderr, "Failed to allocate node in CSV section header linked-list: %s\n", strerror(errno));
-            return ORC_CRITICIAL;
-        }
-        node->prev->next = node;
-        node = node->prev;
-        node->link = node->info = NULL;
+        free(section_name);
+        section_name = NULL;
     }
-    if (node->next)
-        node->next->prev = NULL;
-    s_info->csv_headers = node->next;
-    free(node);
-
     
     if (matches != EOF) {
         fprintf(stderr, "Failed to parse section headers from %s: only matches %i of 10 expected columns\n", csv_filepath, matches);
-        return ORC_SECTION_HEADER_CSV_FORMAT_ERR;
+        err = ORC_SECTION_HEADER_CSV_FORMAT_ERR;
+        goto cleanup;
     }
     else if (ferror(handle)) {
         fprintf(stderr, "IO error when parsing section headers from %s\n", csv_filepath);
-        return ORC_FILE_IO_ERR;
+        err = ORC_FILE_IO_ERR;
+        goto cleanup;
     }
 
-    return ORC_SUCCESS;
+    err = ORC_SUCCESS;
+
+cleanup:
+    free(section_name);
+
+    return err;
 }
 
 
@@ -1160,38 +1202,117 @@ enum ORCError parse_data_section_header(FILE *handle, Elf32_Phdr *loadable_segs,
 }
 
 
-enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info) {
+enum ORCError parse_sdata_section_header(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info, Elf32_Sym *edata) {
+    struct csv_section_header *node;
+    Elf32_Shdr new = { 0 };
+    enum ORCError err;
+
+    new.sh_addralign = htobe32(4);
+    new.sh_flags = htobe32(SHF_ALLOC | SHF_WRITE | SHF_MIPS_GPREL);
+    new.sh_type = htobe32(SHT_PROGBITS);
+
+    for (node = s_info->csv_headers; node->next != NULL && be32toh(node->next->header.sh_addr) < be32toh(edata->st_value); node = node->next);
+
+    new.sh_addr = htobe32(be32toh(node->header.sh_addr) + be32toh(node->header.sh_size));
+    new.sh_size = htobe32(be32toh(edata->st_value) - be32toh(new.sh_addr));
+
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(new.sh_addr), &new.sh_offset)) != ORC_SUCCESS)
+        return err;
+
+    err = add_section_header(s_info, ".sdata", &new, NULL, NULL);
+    return err;
+}
+
+
+// enum ORCError add_section_header_dynsym_idx(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info, Elf32_Sym *sym, Elf32_Shdr *sh) {
+//     struct csv_section_header *node = s_info->csv_headers;
+
+//     for (Elf32_Section i = 0; node != NULL && i < be16toh(sym->st_shndx); i++)
+//         node = node->next;
+
+//     if (node) {
+        
+//     }
+// }
+
+
+enum ORCError parse_dynsym_section_labels(FILE *handle, struct section_info *s_info, struct dynsym_section_label **head) {
     enum ORCError err;
     char *dynstr = NULL;
-    Elf32_Shdr *dynsym_sh, *dynstr_sh;
-    Elf32_Sym sym;
+    Elf32_Shdr *sh;
     Elf32_Word idx;
+    struct dynsym_section_label *ptr, *tmp;
 
-    if ((err = find_section_header(s_info, ".dynsym", &dynsym_sh)) != ORC_SUCCESS)
+
+    if ((err = find_section_header(s_info, ".dynstr", &sh)) != ORC_SUCCESS)
         goto cleanup;
 
-    if ((err = find_section_header(s_info, ".dynstr", &dynstr_sh)) != ORC_SUCCESS)
+    if ((err = read_dynstr_table(handle, sh, &dynstr)) != ORC_SUCCESS)
         goto cleanup;
 
-    if ((err = read_dynstr_table(handle, dynstr_sh, &dynstr)) != ORC_SUCCESS)
+    if ((err = find_section_header(s_info, ".dynsym", &sh)) != ORC_SUCCESS)
         goto cleanup;
 
-    /* .data */
-    switch ((err = find_dynamic_symbol(handle, "_fdata", STT_NOTYPE, dynstr, dynsym_sh, &sym, &idx))) {
-        case ORC_SUCCESS:
-            if ((err = parse_data_section_header(handle, loadable_segs, num_loadable_segs, s_info, &sym)))
+    *head = NULL;
+    for (int i = 0; i < NUM_DYNSYM_SECTION_LABELS; i++) {    
+        switch ((err = find_dynamic_symbol(
+            handle,
+            dynsym_section_labels[i].name,
+            dynsym_section_labels[i].symbol.st_info,
+            dynstr,
+            sh,
+            &dynsym_section_labels[i].symbol,
+            &idx
+        ))) {
+            case ORC_SUCCESS:
+                ptr = dynsym_section_labels + i;
+                ptr->next = *head;
+
+                while (ptr->next && be16toh(ptr->symbol.st_shndx) < be16toh(ptr->next->symbol.st_shndx))
+                {
+                    if (ptr->prev != NULL)
+                        ptr->prev->next = ptr->next;
+
+                    tmp = ptr->prev;
+                    ptr->prev = ptr->next;
+                    ptr->next->prev = tmp;
+
+                    tmp = ptr->next;
+                    ptr->next = ptr->next->next;
+                    ptr->next->next = tmp;
+
+                    if (ptr->next)
+                        ptr->next->prev = ptr;
+                }
+
+                for (ptr; ptr->prev; ptr = ptr->prev);
+                *head = ptr;
+                
+
+                break;
+            case ORC_SYM_NOT_FOUND:
+                break;
+            default:
                 goto cleanup;
-            break;
-        case ORC_SYM_NOT_FOUND:
-            break;
-        default:
-            goto cleanup;
+        }
     }
 
-    err = ORC_SUCCESS;
+    for (ptr =  *head; ptr; ptr = ptr->next)
+        fprintf(stderr, "%hu: %s: 0x%x\n", be16toh(ptr->symbol.st_shndx), ptr->name, be32toh(ptr->symbol.st_value));
 
 cleanup:
-    free(dynstr);
+    return err;    
+}
+
+
+enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info) {
+    enum ORCError err;
+    struct dynsym_section_label *label_list;
+
+
+    err = parse_dynsym_section_labels(handle, s_info, &label_list);
+
+cleanup:
 
     return err;
 }
