@@ -1177,65 +1177,6 @@ enum ORCError find_section_header(struct section_info *s_info, const char *secti
 }
 
 
-enum ORCError parse_data_section_header(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info, Elf32_Sym *fdata) {
-    struct csv_section_header *node;
-    Elf32_Shdr new = { 0 };
-    enum ORCError err;
-
-    new.sh_addralign = htobe32(16);
-    new.sh_addr = fdata->st_value;
-    new.sh_flags = htobe32(SHF_ALLOC | SHF_WRITE);
-    new.sh_type = htobe32(SHT_PROGBITS);
-
-    for (node = s_info->csv_headers; node != NULL && be32toh(node->header.sh_addr) < be32toh(fdata->st_value); node = node->next);
-
-    if (node)
-        new.sh_size = htobe32(be32toh(node->header.sh_addr) - be32toh(fdata->st_value));
-    else
-        new.sh_size = (be32toh(loadable_segs[num_loadable_segs - 1].p_vaddr) + be32toh(loadable_segs[num_loadable_segs - 1].p_memsz)) - be32toh(new.sh_addr);
-
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(new.sh_addr), &new.sh_offset)) != ORC_SUCCESS)
-        return err;
-
-    err = add_section_header(s_info, ".data", &new, NULL, NULL);
-    return err;
-}
-
-
-enum ORCError parse_sdata_section_header(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info, Elf32_Sym *edata) {
-    struct csv_section_header *node;
-    Elf32_Shdr new = { 0 };
-    enum ORCError err;
-
-    new.sh_addralign = htobe32(4);
-    new.sh_flags = htobe32(SHF_ALLOC | SHF_WRITE | SHF_MIPS_GPREL);
-    new.sh_type = htobe32(SHT_PROGBITS);
-
-    for (node = s_info->csv_headers; node->next != NULL && be32toh(node->next->header.sh_addr) < be32toh(edata->st_value); node = node->next);
-
-    new.sh_addr = htobe32(be32toh(node->header.sh_addr) + be32toh(node->header.sh_size));
-    new.sh_size = htobe32(be32toh(edata->st_value) - be32toh(new.sh_addr));
-
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(new.sh_addr), &new.sh_offset)) != ORC_SUCCESS)
-        return err;
-
-    err = add_section_header(s_info, ".sdata", &new, NULL, NULL);
-    return err;
-}
-
-
-// enum ORCError add_section_header_dynsym_idx(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info, Elf32_Sym *sym, Elf32_Shdr *sh) {
-//     struct csv_section_header *node = s_info->csv_headers;
-
-//     for (Elf32_Section i = 0; node != NULL && i < be16toh(sym->st_shndx); i++)
-//         node = node->next;
-
-//     if (node) {
-        
-//     }
-// }
-
-
 enum ORCError parse_dynsym_section_labels(FILE *handle, struct section_info *s_info, struct dynsym_section_label **head) {
     enum ORCError err;
     char *dynstr = NULL;
@@ -1268,6 +1209,9 @@ enum ORCError parse_dynsym_section_labels(FILE *handle, struct section_info *s_i
                 ptr = dynsym_section_labels + i;
                 ptr->next = *head;
 
+                if (*head)
+                    (*head)->prev = ptr;
+
                 while (ptr->next && be16toh(ptr->symbol.st_shndx) < be16toh(ptr->next->symbol.st_shndx))
                 {
                     if (ptr->prev != NULL)
@@ -1291,7 +1235,7 @@ enum ORCError parse_dynsym_section_labels(FILE *handle, struct section_info *s_i
 
                 break;
             case ORC_SYM_NOT_FOUND:
-                break;
+                fprintf(stderr, "dynsym section label %s not found\n", dynsym_section_labels[i].name);
             default:
                 goto cleanup;
         }
@@ -1301,6 +1245,7 @@ enum ORCError parse_dynsym_section_labels(FILE *handle, struct section_info *s_i
         fprintf(stderr, "%hu: %s: 0x%x\n", be16toh(ptr->symbol.st_shndx), ptr->name, be32toh(ptr->symbol.st_value));
 
 cleanup:
+    free(dynstr);
     return err;    
 }
 
@@ -1308,9 +1253,102 @@ cleanup:
 enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info) {
     enum ORCError err;
     struct dynsym_section_label *label_list;
+    uint8_t found_bss = 0;
+    Elf32_Shdr sh = { 0 };
+    Elf32_Half segment_idx;
+    struct csv_section_header *sh_ptr;
+    char *section_name;
+
+    if ((err = parse_dynsym_section_labels(handle, s_info, &label_list)) != ORC_SUCCESS)
+        goto cleanup;
+
+    for (struct dynsym_section_label *ptr = label_list; ptr; ptr = ptr->next) {
+        if (!strcmp(ptr->name, "_end") || ((!strcmp(ptr->name, "_fbss") || !strcmp(ptr->name, "__bss_start")) && found_bss))
+            continue;
+
+        if (!strcmp(ptr->name, "_edata")) {
+            /*
+                This is a special case because _edata indicates the end
+                of the (sdata) section, not the beginning
+            */
+            section_name = ".sdata";
+            sh.sh_addralign = htobe32(4);
+            sh.sh_flags = htobe32(SHF_ALLOC | SHF_WRITE | SHF_MIPS_GPREL);
+            sh.sh_type = htobe32(SHT_PROGBITS);
+
+            for (sh_ptr = s_info->csv_headers; sh_ptr->next != NULL && be32toh(sh_ptr->next->header.sh_addr) < be32toh(ptr->symbol.st_value); sh_ptr = sh_ptr->next);
+
+            sh.sh_addr = htobe32(be32toh(sh_ptr->header.sh_addr) + be32toh(sh_ptr->header.sh_size));
+            sh.sh_size = htobe32(be32toh(ptr->symbol.st_value) - be32toh(sh.sh_addr));
+
+            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(sh.sh_addr), &sh.sh_offset)) != ORC_SUCCESS)
+                return err;
+
+            ptr->next->prev = ptr->prev; /* remove _edata from the section label list so it is not used for section boundary calculations */
+        }
+        else {
+            sh.sh_addr = ptr->symbol.st_value;
+            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(sh.sh_addr), &sh.sh_offset)) != ORC_SUCCESS)
+                return err;
+            if ((!strcmp(ptr->name, "_fbss") || !strcmp(ptr->name, "__bss_start")) && be32toh(sh.sh_addr) % 16)
+                sh.sh_addr = htobe32((16 - (be32toh(sh.sh_addr) % 16)) + be32toh(sh.sh_addr));
+
+            if (ptr->prev == NULL) {
+                if ((err = find_vaddr_segment(loadable_segs, num_loadable_segs, be32toh(sh.sh_addr), &segment_idx)) != ORC_SUCCESS)
+                    goto cleanup;
+                sh.sh_size = htobe32((be32toh(loadable_segs[segment_idx].p_vaddr) + be32toh(loadable_segs[segment_idx].p_memsz)) - be32toh(sh.sh_addr));
+            }
+            else {
+                if (be16toh(ptr->symbol.st_shndx) == be16toh(ptr->prev->symbol.st_shndx)) /* We have already added a section header corresponding to this symbol */
+                    continue; 
+
+                if (be16toh(ptr->prev->symbol.st_shndx) - be16toh(ptr->symbol.st_shndx) == 1) /* This section is directly adjacent to the previous section */
+                    sh.sh_size = htobe32(be32toh(ptr->prev->symbol.st_value) - be32toh(sh.sh_addr));
+                else {
+                    for (sh_ptr = s_info->csv_headers; sh_ptr->next && be32toh(sh.sh_addr) >= be32toh(sh_ptr->header.sh_addr); sh_ptr = sh_ptr->next);
+                    sh.sh_size = htobe32(be32toh(sh_ptr->header.sh_addr) - be32toh(sh.sh_addr));
+                }
+            }
+
+            if (!strcmp(ptr->name, "_init")) {
+                section_name = ".init";
+                sh.sh_addralign = htobe32(4);
+                sh.sh_flags = htobe32(SHF_ALLOC | SHF_EXECINSTR);
+                sh.sh_type = htobe32(SHT_PROGBITS);
+            }
+            else if (!strcmp(ptr->name, "_ftext")) {
+                section_name = ".text";
+                sh.sh_addralign = htobe32(16);
+                sh.sh_flags = htobe32(SHF_ALLOC | SHF_EXECINSTR);
+                sh.sh_type = htobe32(SHT_PROGBITS);
+            }
+            else if (!strcmp(ptr->name, "_fini")) {
+                section_name = ".fini";
+                sh.sh_addralign = htobe32(4);
+                sh.sh_flags = htobe32(SHF_ALLOC | SHF_EXECINSTR);
+                sh.sh_type = htobe32(SHT_PROGBITS);
+
+            }
+            else if (!strcmp(ptr->name, "_fdata")) {
+                section_name = ".data";
+                sh.sh_addralign = htobe32(16);
+                sh.sh_flags = htobe32(SHF_ALLOC | SHF_WRITE);
+                sh.sh_type = htobe32(SHT_PROGBITS);
+            }
+            else { /* bss */ 
+                found_bss = 1;
+                section_name = ".bss";
+                sh.sh_addralign = htobe32(16);
+                sh.sh_flags = htobe32(SHF_ALLOC | SHF_WRITE);
+                sh.sh_type = htobe32(SHT_NOBITS);
+            }
+
+        }
 
 
-    err = parse_dynsym_section_labels(handle, s_info, &label_list);
+        if ((err = add_section_header(s_info, section_name, &sh, NULL, NULL)) != ORC_SUCCESS)
+            goto cleanup;
+    }
 
 cleanup:
 

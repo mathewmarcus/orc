@@ -98,17 +98,27 @@ enum ORCError find_program_headers(FILE *handle, Elf32_Off ph_off, Elf32_Half ph
 }
 
 
-enum ORCError calculate_file_offset(Elf32_Phdr *loadable_segs, Elf32_Half num_segs, Elf32_Addr vaddr, Elf32_Off *file_off) {
+enum ORCError find_vaddr_segment(Elf32_Phdr *loadable_segs, Elf32_Half num_segs, Elf32_Addr vaddr, Elf32_Half *segment_index) {
     for (Elf32_Half i = 0; i < num_segs; i++) {
         if (be32toh(loadable_segs[i].p_vaddr) < vaddr && vaddr < be32toh(loadable_segs[i].p_vaddr) + be32toh(loadable_segs[i].p_memsz)) {
-            *file_off = htobe32((vaddr - be32toh(loadable_segs[i].p_vaddr)) + be32toh(loadable_segs[i].p_offset));
-            fprintf(stderr, "0x%x\n", be32toh(*file_off));
+            *segment_index = i;
             return ORC_SUCCESS;
         }
     }
 
     fprintf(stderr, "Failed to find loadable segment containing vaddr 0x%x\n", vaddr);
     return ORC_INVALID_ELF;
+}
+
+
+enum ORCError calculate_file_offset(Elf32_Phdr *loadable_segs, Elf32_Half num_segs, Elf32_Addr vaddr, Elf32_Off *file_off) {
+    enum ORCError err;
+    Elf32_Half i;
+
+    if ((err = find_vaddr_segment(loadable_segs, num_segs, vaddr, &i)) == ORC_SUCCESS)
+        *file_off = htobe32((vaddr - be32toh(loadable_segs[i].p_vaddr)) + be32toh(loadable_segs[i].p_offset));
+    
+    return err;
 }
 
 
