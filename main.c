@@ -463,7 +463,7 @@ enum ORCError add_section_header(struct section_info *s_info, const char *name, 
     if (s_info->csv_headers)
         s_info->csv_headers->prev = node;
 
-    while (node->next && be32toh(node->header.sh_offset) > be32toh(node->next->header.sh_offset))
+    while (node->next && be32toh(node->header.sh_offset) >= be32toh(node->next->header.sh_offset))
     {
         if (node->prev != NULL)
             node->prev->next = node->next;
@@ -1255,7 +1255,7 @@ enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf3
     struct dynsym_section_label *label_list;
     uint8_t found_bss = 0;
     Elf32_Shdr sh = { 0 };
-    Elf32_Half segment_idx;
+    Elf32_Half segment_idx, segment_idx2;
     struct csv_section_header *sh_ptr;
     char *section_name;
 
@@ -1294,8 +1294,7 @@ enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf3
                 sh.sh_addr = htobe32((16 - (be32toh(sh.sh_addr) % 16)) + be32toh(sh.sh_addr));
 
             if (ptr->prev == NULL) {
-                if ((err = find_vaddr_segment(loadable_segs, num_loadable_segs, be32toh(sh.sh_addr), &segment_idx)) != ORC_SUCCESS)
-                    goto cleanup;
+                find_vaddr_segment(loadable_segs, num_loadable_segs, be32toh(sh.sh_addr), &segment_idx);
                 sh.sh_size = htobe32((be32toh(loadable_segs[segment_idx].p_vaddr) + be32toh(loadable_segs[segment_idx].p_memsz)) - be32toh(sh.sh_addr));
             }
             else {
@@ -1306,7 +1305,10 @@ enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf3
                     sh.sh_size = htobe32(be32toh(ptr->prev->symbol.st_value) - be32toh(sh.sh_addr));
                 else {
                     for (sh_ptr = s_info->csv_headers; sh_ptr->next && be32toh(sh.sh_addr) >= be32toh(sh_ptr->header.sh_addr); sh_ptr = sh_ptr->next);
-                    sh.sh_size = htobe32(be32toh(sh_ptr->header.sh_addr) - be32toh(sh.sh_addr));
+                    find_vaddr_segment(loadable_segs, num_loadable_segs, be32toh(sh.sh_addr), &segment_idx);
+                    find_vaddr_segment(loadable_segs, num_loadable_segs, be32toh(sh_ptr->header.sh_addr), &segment_idx2);
+
+                    sh.sh_size = segment_idx == segment_idx2 ? htobe32(be32toh(sh_ptr->header.sh_addr) - be32toh(sh.sh_addr)): htobe32((be32toh(loadable_segs[segment_idx].p_vaddr) + be32toh(loadable_segs[segment_idx].p_memsz)) - be32toh(sh.sh_addr));
                 }
             }
 
