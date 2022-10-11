@@ -180,6 +180,7 @@ int main(int argc, char *argv[])
     enum ORCError err;
     struct section_info s_info = { 0 };
     char *csv_file = NULL;
+    struct csv_section_header *hdr_ptr;
 
     opterr = 0;
     while ((opt = getopt(argc, argv, "S:")) != -1)
@@ -326,17 +327,28 @@ int main(int argc, char *argv[])
     if ((err = parse_sh_from_dynsym(handle, loadable_segments, num_loadable_segments, &s_info)) != ORC_SUCCESS)
         goto err_exit;
 
+
+    for (hdr_ptr = s_info.csv_headers; hdr_ptr->next; hdr_ptr = hdr_ptr->next) {
+        fprintf(stderr, "%s: 0x%x : 0x%x\n", hdr_ptr->name, be32toh(hdr_ptr->header.sh_addr), be32toh(hdr_ptr->header.sh_size));
+    }
+    fprintf(stderr, "%s: 0x%x : 0x%x\n", hdr_ptr->name, be32toh(hdr_ptr->header.sh_addr), be32toh(hdr_ptr->header.sh_size));
+
+
     if (fseek(handle, 0L, SEEK_END) == -1 || (file_size = ftell(handle)) == -1)
     {
         fprintf(stderr, "Failed to obtain file size of %s: %s\n", argv[optind], strerror(errno));
         fclose(handle);
         return 1;
     }
-    fprintf(stderr, "File %s size: %li bytes\n", argv[optind], file_size);
+    fprintf(stderr, "File %s size: 0x%lx bytes\n", argv[optind], file_size);
 
-    if (file_size % 32)
+    Elf32_Word section_end = be32toh(hdr_ptr->header.sh_type) == SHT_NOBITS ? be32toh(hdr_ptr->header.sh_offset): be32toh(hdr_ptr->header.sh_offset) + be32toh(hdr_ptr->header.sh_size);
+    if (section_end > file_size)
+        shstrtab_offset += (section_end - file_size);
+
+    if ((file_size + shstrtab_offset) % 32)
     {
-        shstrtab_offset = 32 - (file_size % 32);
+        shstrtab_offset += (32 - ((file_size + shstrtab_offset) % 32));
         if (fseek(handle, shstrtab_offset, SEEK_CUR) == -1)
         {
             fprintf(stderr, "Failed to seek to .shstrtab offset at %li in %s: %s\n", file_size + shstrtab_offset, argv[optind], strerror(errno));
@@ -344,7 +356,9 @@ int main(int argc, char *argv[])
             return 1;
         }
     }
-    fprintf(stderr, ".shstrtab offset: %li\n", file_size + shstrtab_offset);
+    fprintf(stderr, ".shstrtab offset: 0x%lx\n", file_size + shstrtab_offset);
+    fprintf(stderr, "End of last section: 0x%x\n", section_end);
+
 
     /*
     .shstrtab
@@ -356,7 +370,7 @@ int main(int argc, char *argv[])
     shstrtab_header.sh_size = htobe32(s_info.shstrtab_len + strlen(".shstrtab") + 1); /* plus terminating \0 */
     shstrtab_header.sh_addralign = htobe32(1);
 
-    if (add_section_header(&s_info, ".shstrtab", &shstrtab_header, NULL, NULL))
+    if (add_section_header(&s_info, ".shstrtab", &shstrtab_header, NULL, NULL) != ORC_SUCCESS)
         goto err_exit;
 
     if (build_section_headers(&s_info) != ORC_SUCCESS)
@@ -1298,10 +1312,7 @@ enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf3
                 sh.sh_size = htobe32((be32toh(loadable_segs[segment_idx].p_vaddr) + be32toh(loadable_segs[segment_idx].p_memsz)) - be32toh(sh.sh_addr));
             }
             else {
-                if (be16toh(ptr->symbol.st_shndx) == be16toh(ptr->prev->symbol.st_shndx)) /* We have already added a section header corresponding to this symbol */
-                    continue; 
-
-                if (be16toh(ptr->prev->symbol.st_shndx) - be16toh(ptr->symbol.st_shndx) == 1) /* This section is directly adjacent to the previous section */
+                if (ptr->prev->symbol.st_shndx == ptr->symbol.st_shndx || be16toh(ptr->prev->symbol.st_shndx) - be16toh(ptr->symbol.st_shndx) == 1) /* This section is directly adjacent to the previous section */
                     sh.sh_size = htobe32(be32toh(ptr->prev->symbol.st_value) - be32toh(sh.sh_addr));
                 else {
                     for (sh_ptr = s_info->csv_headers; sh_ptr->next && be32toh(sh.sh_addr) >= be32toh(sh_ptr->header.sh_addr); sh_ptr = sh_ptr->next);
