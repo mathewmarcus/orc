@@ -80,7 +80,7 @@ struct section_info {
    uint8_t *strtab;
    size_t strtab_len;
 
-   uint8_t *symtab;
+   Elf32_Sym *symtab;
    Elf32_Word num_symbols;
 };
 
@@ -188,9 +188,9 @@ int main(int argc, char *argv[])
     FILE *handle;
     Elf32_Ehdr elf_header;
     Elf32_Phdr *loadable_segments = NULL, *seg = NULL;
-    Elf32_Shdr null_section = { 0 }, interp = { 0 }, mips_abiflags = { 0 }, reginfo = { 0 };
+    Elf32_Shdr null_section = { 0 }, interp = { 0 }, mips_abiflags = { 0 }, reginfo = { 0 }, sh = { 0 };
     Elf32_Half num_loadable_segments, phdr_count;
-    long file_size, shstrtab_offset = 0, sh_offset = 0;
+    long offset;
     int ret, opt;
     enum ORCError err;
     struct section_info s_info = { 0 };
@@ -246,9 +246,6 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Currently only 32 bit big-endian MIPS binaries are supported\n");
         goto err_exit;
     }
-
-    if ((err = parse_symtab_from_ghidra_csv(ghidra_symbols_csv, ghidra_functions_csv, &s_info)) != ORC_SUCCESS)
-        goto err_exit;
 
     if (elf_header.e_shoff || elf_header.e_shnum) {
         fprintf(stderr, "%s already contains %hu section headers at offset 0x%x\n", argv[optind], be16toh(elf_header.e_shnum), be32toh(elf_header.e_shoff));
@@ -358,29 +355,82 @@ int main(int argc, char *argv[])
     fprintf(stderr, "%s: 0x%x : 0x%x\n", hdr_ptr->name, be32toh(hdr_ptr->header.sh_addr), be32toh(hdr_ptr->header.sh_size));
 
 
-    if (fseek(handle, 0L, SEEK_END) == -1 || (file_size = ftell(handle)) == -1)
+    if (fseek(handle, 0L, SEEK_END) == -1 || (offset = ftell(handle)) == -1)
     {
         fprintf(stderr, "Failed to obtain file size of %s: %s\n", argv[optind], strerror(errno));
         fclose(handle);
         return 1;
     }
-    fprintf(stderr, "File %s size: 0x%lx bytes\n", argv[optind], file_size);
+    fprintf(stderr, "File %s size: 0x%lx bytes\n", argv[optind], offset);
 
     Elf32_Word section_end = be32toh(hdr_ptr->header.sh_type) == SHT_NOBITS ? be32toh(hdr_ptr->header.sh_offset): be32toh(hdr_ptr->header.sh_offset) + be32toh(hdr_ptr->header.sh_size);
-    if (section_end > file_size)
-        shstrtab_offset += (section_end - file_size);
+    if (section_end > offset) {
+        if (fseek(handle, section_end-offset, SEEK_CUR) == -1) {
+            fprintf(stderr, "Failed to seek to section header end offset at 0x%x in %s: %s\n", section_end, argv[optind], strerror(errno));
+            goto err_exit;
+        }
+        offset = section_end;
+    }
 
-    if ((file_size + shstrtab_offset) % 32)
-    {
-        shstrtab_offset += (32 - ((file_size + shstrtab_offset) % 32));
-        if (fseek(handle, shstrtab_offset, SEEK_CUR) == -1)
+    if (ghidra_symbols_csv) {
+        if ((err = parse_symtab_from_ghidra_csv(ghidra_symbols_csv, ghidra_functions_csv, &s_info)) != ORC_SUCCESS)
+            goto err_exit;
+
+        if (offset % 4)
         {
-            fprintf(stderr, "Failed to seek to .shstrtab offset at %li in %s: %s\n", file_size + shstrtab_offset, argv[optind], strerror(errno));
-            fclose(handle);
-            return 1;
+            offset += (4 - (offset % 4));
+            if (fseek(handle, offset, SEEK_SET) == -1)
+            {
+                fprintf(stderr, "Failed to seek to .symtab offset at %li in %s: %s\n", offset, argv[optind], strerror(errno));
+                goto err_exit;
+            }
+        }
+
+        if (fwrite(s_info.symtab, sizeof(Elf32_Sym), s_info.num_symbols, handle) != s_info.num_symbols) {
+            fprintf(stderr, "Failed to write %hu symbols to %s at offset 0x%lx\n", s_info.num_symbols, argv[optind], offset);
+            goto err_exit;
+        }
+        sh.sh_addr = sh.sh_flags = 0;
+        sh.sh_addralign = htobe32(4);
+        sh.sh_entsize = htobe32(sizeof(Elf32_Sym));
+        /*
+            One greater than the symbol table index of the last local symbol. 
+            https://docs.oracle.com/cd/E19455-01/806-3773/6jct9o0bs/index.html#elf-15226
+            since we are only parsing Global symbols from Ghidra, this will always be 1
+        */
+        sh.sh_info = htobe32(1);
+        sh.sh_offset = htobe32(offset);
+        sh.sh_size = htobe32(s_info.num_symbols * sizeof(Elf32_Sym));
+        sh.sh_type = htobe32(SHT_SYMTAB);
+        if (add_section_header(&s_info, ".symtab", &sh, ".strtab", NULL) != ORC_SUCCESS)
+            goto err_exit;
+        offset += be32toh(sh.sh_size);
+
+        if (fwrite(s_info.strtab, s_info.strtab_len, 1, handle) != 1)
+        {
+            fprintf(stderr, "Failed to write %lu byte .strtab to %s at offset 0x%lx\n", s_info.shstrtab_len, argv[optind], offset);
+            goto err_exit;
+        }
+        sh.sh_addr = sh.sh_flags = sh.sh_info = sh.sh_link = sh.sh_entsize = 0;
+        sh.sh_addralign = htobe32(1);
+        sh.sh_offset = htobe32(offset);
+        sh.sh_size = htobe32(s_info.strtab_len);
+        sh.sh_type = htobe32(SHT_STRTAB);
+        if (add_section_header(&s_info, ".strtab", &sh, NULL, NULL) != ORC_SUCCESS)
+            goto err_exit;
+        offset += be32toh(sh.sh_size);
+    }
+
+    if (offset % 32)
+    {
+        offset += (32 - (offset % 32));
+        if (fseek(handle, offset, SEEK_SET) == -1)
+        {
+            fprintf(stderr, "Failed to seek to .shstrtab offset at %li in %s: %s\n", offset, argv[optind], strerror(errno));
+            goto err_exit;
         }
     }
-    fprintf(stderr, ".shstrtab offset: 0x%lx\n", file_size + shstrtab_offset);
+    fprintf(stderr, ".shstrtab offset: 0x%lx\n", offset);
     fprintf(stderr, "End of last section: 0x%x\n", section_end);
 
 
@@ -390,7 +440,7 @@ int main(int argc, char *argv[])
     Elf32_Shdr shstrtab_header = {0};
     shstrtab_header.sh_name = htobe32(s_info.num_headers - 1);
     shstrtab_header.sh_type = htobe32(SHT_STRTAB);
-    shstrtab_header.sh_offset = htobe32(file_size + shstrtab_offset);
+    shstrtab_header.sh_offset = htobe32(offset);
     shstrtab_header.sh_size = htobe32(s_info.shstrtab_len + strlen(".shstrtab") + 1); /* plus terminating \0 */
     shstrtab_header.sh_addralign = htobe32(1);
 
@@ -402,29 +452,29 @@ int main(int argc, char *argv[])
 
     if (fwrite(s_info.shstrtab, s_info.shstrtab_len, 1, handle) != 1)
     {
-        fprintf(stderr, "Failed to write %lu byte .shstrtab to %s at offset 0x%lx\n", s_info.shstrtab_len, argv[optind], file_size + shstrtab_offset);
+        fprintf(stderr, "Failed to write %lu byte .shstrtab to %s at offset 0x%lx\n", s_info.shstrtab_len, argv[optind], offset);
         fclose(handle);
         return 1;
     }
-    fprintf(stderr, "Wrote %lu byte .shstrtab to %s at offset 0x%lx\n", s_info.shstrtab_len, argv[optind], file_size + shstrtab_offset);
+    fprintf(stderr, "Wrote %lu byte .shstrtab to %s at offset 0x%lx\n", s_info.shstrtab_len, argv[optind], offset);
 
-    if (s_info.shstrtab_len % 4)
+    offset += s_info.shstrtab_len;
+    if (offset % 4)
     {
-        sh_offset = 4 - (s_info.shstrtab_len % 4);
-        if (fseek(handle, sh_offset, SEEK_CUR) == -1)
+        offset += 4 - (offset % 4);
+        if (fseek(handle, offset, SEEK_SET) == -1)
         {
             fprintf(
                 stderr,
                 "Failed to seek to section header offset at 0x%lx in %s: %s\n",
-                file_size + shstrtab_offset + s_info.shstrtab_len + sh_offset,
+                offset,
                 argv[optind],
                 strerror(errno)
             );
-            fclose(handle);
-            return 1;
+            goto err_exit;
         }
     }
-    fprintf(stderr, "section header offset: 0x%lx\n", file_size + shstrtab_offset + s_info.shstrtab_len + sh_offset);
+    fprintf(stderr, "section header offset: 0x%lx\n", offset);
     fprintf(stderr, "%li\n", ftell(handle));
 
     if (fwrite(s_info.headers, sizeof(Elf32_Shdr), s_info.num_headers, handle) != s_info.num_headers) {
@@ -435,7 +485,7 @@ int main(int argc, char *argv[])
 
     elf_header.e_shentsize = htobe16(sizeof(Elf32_Shdr));
     elf_header.e_shnum = htobe16(s_info.num_headers);
-    elf_header.e_shoff = htobe32(file_size + shstrtab_offset + s_info.shstrtab_len + sh_offset);
+    elf_header.e_shoff = htobe32(offset);
     elf_header.e_shstrndx = htobe16(s_info.num_headers - 1);
 
     if (fseek(handle, 0, SEEK_SET) == -1) {
