@@ -12,9 +12,13 @@
 #define SHT_MIPS_ABIFLAGS 0x7000002a /* This is not included in elf.h */
 /* Nr,Name,Type,Addr,Offset,Size,EntSize,Flags,Link,Info,Alignment */
 #define CSV_FORMAT_STR "%m[^,],%u,0x%08x,0x%08x,%u,%u,%u,%u,%u,%u\n"
-#define SYM_CSV_FORMAT_STR "\"%m[^,\"]\",\"%x\",\"%m[^,\"]\",\"%m[^,\"]\",\"%m[^,\"]\""
-#define FUNC_CSV_FORMAT_STR "\"%m[^,\"]\",\"%*x\",\"%*m[^\"]\",\"%i\"\n"
+#define FUNC_CSV_FORMAT_STR "\"%m[^,\"]\",\"%x\",\"%i\"\n"
 #define NUM_DYNSYM_SECTION_LABELS 8
+
+#ifndef STO_MIPS16
+#define STO_MIPS16 0xf0
+#define ELF_ST_IS_MIPS16(other) (((other) & STO_MIPS16) == STO_MIPS16)
+#endif
 
 /* 
     https://github.com/bminor/binutils-gdb/blob/master/binutils/readelf.c#L18968 
@@ -114,7 +118,7 @@ enum ORCError parse_gnu_version_requirements_section(
 );
 enum ORCError build_section_headers(struct section_info *s_info);
 enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info);
-enum ORCError parse_symtab_from_ghidra_csv(const char *sym_csv_filepath, const char *func_csv_filepath, struct section_info *s_info);
+enum ORCError parse_symtab_from_ghidra_csv(const char *sym_csv_filepath, struct section_info *s_info);
     
 static struct dynsym_section_label dynsym_section_labels[NUM_DYNSYM_SECTION_LABELS] = {
     {
@@ -198,7 +202,7 @@ int main(int argc, char *argv[])
     struct csv_section_header *hdr_ptr;
 
     opterr = 0;
-    while ((opt = getopt(argc, argv, "S:s:f:")) != -1)
+    while ((opt = getopt(argc, argv, "S:s:")) != -1)
     {
         switch (opt)
         {
@@ -207,9 +211,6 @@ int main(int argc, char *argv[])
             break;
         case 's':
             ghidra_symbols_csv = optarg;
-            break;
-        case 'f':
-            ghidra_functions_csv = optarg;
             break;
         case '?':
         default:
@@ -373,7 +374,7 @@ int main(int argc, char *argv[])
     }
 
     if (ghidra_symbols_csv) {
-        if ((err = parse_symtab_from_ghidra_csv(ghidra_symbols_csv, ghidra_functions_csv, &s_info)) != ORC_SUCCESS)
+        if ((err = parse_symtab_from_ghidra_csv(ghidra_symbols_csv, &s_info)) != ORC_SUCCESS)
             goto err_exit;
 
         if (offset % 4)
@@ -1442,59 +1443,11 @@ cleanup:
     return err;
 }
 
-enum ORCError find_ghidra_csv_func(FILE *func_file, const char *func_name, Elf32_Word *func_size) {
-    char *func_name2, *lineptr = NULL;
-    int matches;
+
+enum ORCError parse_symtab_from_ghidra_csv(const char *sym_csv_filepath, struct section_info *s_info) {
+    FILE *sym_file;
     enum ORCError err;
-    size_t buflen = 0;
-
-    if (fseek(func_file, 0, SEEK_SET) == -1) {
-        fprintf(stderr, "Failed to seek to beginning of Ghidra functions CSV file: %s\n", strerror(errno));
-        goto cleanup;
-    }
-
-    if (getline(&lineptr, &buflen, func_file) == -1) { /* skip CSV column headers */
-        fprintf(stderr, "Invalid Ghidra functions CSV\n");
-        err = ORC_SECTION_HEADER_CSV_FORMAT_ERR;
-        goto cleanup;
-    }
-
-    while ((matches = fscanf(func_file, FUNC_CSV_FORMAT_STR, &func_name2, func_size)) == 2)
-    {
-        if (strcmp(func_name, func_name2) == 0) {
-            free(func_name2);
-            err = ORC_SUCCESS;
-            goto cleanup;
-        }
-
-        free(func_name2);
-    }
-    
-    if (matches != EOF) {
-        fprintf(stderr, "Failed to parse function from Ghidra functions CSV file: only matches %i of 2 expected columns\n", matches);
-        err = ORC_SECTION_HEADER_CSV_FORMAT_ERR;
-        goto cleanup;
-    }
-    else if (ferror(func_file)) {
-        fprintf(stderr, "IO error when parsing section headers from Ghidra functions CSV file\n");
-        err = ORC_FILE_IO_ERR;
-        goto cleanup;
-    }
-
-    fprintf(stderr, "Failed to find function %s in Ghidra function CSV file\n", func_name);
-    err = ORC_SYM_NOT_FOUND;
-
-cleanup:
-    free(lineptr);
-    return err;
-    
-}
-
-
-enum ORCError parse_symtab_from_ghidra_csv(const char *sym_csv_filepath, const char *func_csv_filepath, struct section_info *s_info) {
-    FILE *sym_file, *func_file;
-    enum ORCError err;
-    char *lineptr = NULL, *sym_name, *sym_type, *sym_namespace, *sym_source;
+    char *lineptr = NULL, *sym_name;
     size_t buflen = 0, sym_name_len;
     ssize_t line_len;
     Elf32_Sym sym;
@@ -1508,45 +1461,16 @@ enum ORCError parse_symtab_from_ghidra_csv(const char *sym_csv_filepath, const c
         return ORC_FILE_NOT_FOUND;
     }
 
-    if (func_csv_filepath && !(func_file = fopen(func_csv_filepath, "r")))
-    {
-        fprintf(stderr, "Failed to open %s: %s\n", func_csv_filepath, strerror(errno));
-        fclose(sym_file);
-        return ORC_FILE_NOT_FOUND;
-    }
-
     for (int line_num = 0; (line_len = getline(&lineptr, &buflen, sym_file)) != -1; line_num++)
     {
         if (line_num == 0)
             continue; /* skip CSV column headers */
 
-        if ((num_matches = sscanf(lineptr, SYM_CSV_FORMAT_STR, &sym_name, &sym.st_value, &sym_type, &sym_namespace, &sym_source)) != 5) {
-            fprintf(stderr, "%s is incorrectly formatted, only matched %i id 5 expected columns in line: %s\n", sym_csv_filepath, num_matches, lineptr);
+        if ((num_matches = sscanf(lineptr, FUNC_CSV_FORMAT_STR, &sym_name, &sym.st_value, &sym.st_size)) != 3) {
+            fprintf(stderr, "%s is incorrectly formatted, only matched %i id 3 expected columns in line: %s\n", sym_csv_filepath, num_matches, lineptr);
             err = ORC_SECTION_HEADER_CSV_FORMAT_ERR;
             goto cleanup;
         }
-
-        if (strcmp(sym_type, "Function") || strcmp(sym_namespace, "Global") || (strcmp(sym_source, "Default") && strcmp(sym_source, "User Defined")))
-            continue;
-
-        free(sym_type);
-        free(sym_namespace);
-        free(sym_source);
-
-        if (func_csv_filepath) {
-            switch ((err = find_ghidra_csv_func(func_file, sym_name, &sym.st_size)))
-            {
-            case ORC_SUCCESS:
-                sym.st_size = sym.st_size;
-                break;
-            case ORC_SYM_NOT_FOUND:
-                sym.st_size = 0;
-            default:
-                goto cleanup;
-            }
-        }
-        else
-            sym.st_size = 0;
 
         index = 0;
         for (ptr = s_info->csv_headers; ptr && !(sym.st_value >= be32toh(ptr->header.sh_addr) && sym.st_value + sym.st_size <= be32toh(ptr->header.sh_addr) + be32toh(ptr->header.sh_size)); ptr = ptr->next)
@@ -1584,7 +1508,6 @@ enum ORCError parse_symtab_from_ghidra_csv(const char *sym_csv_filepath, const c
     
 cleanup:
     free(lineptr);
-    fclose(func_file);
     fclose(sym_file);
 
     return err;
