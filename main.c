@@ -773,15 +773,16 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
                 return err;
             if ((err = add_section_header(s_info, ".gnu.version", &gnu_version, ".dynsym", NULL)) != ORC_SUCCESS)
                 return err;
+
+            if ((err = parse_gnu_version_requirements_section(handle, dyn_seg_offset, dyn_seg_size, loadable_segs, num_loadable_segs, s_info)) != ORC_SUCCESS)
+                return err;
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_VERSYM dynamic tag\n");
+            break;
         default:
             return err;
     }
-
-    if ((err = parse_gnu_version_requirements_section(handle, dyn_seg_offset, dyn_seg_size, loadable_segs, num_loadable_segs, s_info)) != ORC_SUCCESS)
-        return err;
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_HASH, &dynamic_tag))) {
         case ORC_SUCCESS:
