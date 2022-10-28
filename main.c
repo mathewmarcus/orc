@@ -324,6 +324,27 @@ int main(int argc, char *argv[])
             goto err_exit;
     }
 
+    switch (find_program_headers(handle, ph_off, ph_num, PT_GNU_EH_FRAME, &seg, &phdr_count)) {
+        case ORC_SUCCESS:
+            sh.sh_addr = seg->p_vaddr;
+            sh.sh_addralign = seg->p_align;
+            if (seg->p_flags & htobe32(PF_R))
+                sh.sh_flags |= htobe32(SHF_ALLOC);
+            if (seg->p_flags & htobe32(PF_W))
+                sh.sh_flags |= htobe32(SHF_WRITE);
+            if (seg->p_flags & htobe32(PF_X))
+                sh.sh_flags |= htobe32(SHF_EXECINSTR);
+            sh.sh_offset = seg->p_offset;
+            sh.sh_size = seg->p_filesz;
+            sh.sh_type = htobe32(SHT_PROGBITS);
+            if (add_section_header(&s_info, ".eh_frame_hdr", &sh, NULL, NULL) != ORC_SUCCESS)
+                goto err_exit;
+        case ORC_PHDR_NOT_FOUND:
+            break;
+        default:
+            goto err_exit;
+    }
+
     switch (find_program_headers(handle, ph_off, ph_num, PT_LOAD, &loadable_segments, &num_loadable_segments)) {
         case ORC_SUCCESS:
         case ORC_PHDR_NOT_FOUND:
