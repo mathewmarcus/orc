@@ -1302,7 +1302,7 @@ enum ORCError parse_dynsym_section_labels(FILE *handle, struct section_info *s_i
                 if (*head)
                     (*head)->prev = ptr;
 
-                while (ptr->next && be16toh(ptr->symbol.st_shndx) < be16toh(ptr->next->symbol.st_shndx))
+                while (ptr->next && be32toh(ptr->symbol.st_value) < be32toh(ptr->next->symbol.st_value))
                 {
                     if (ptr->prev != NULL)
                         ptr->prev->next = ptr->next;
@@ -1311,9 +1311,9 @@ enum ORCError parse_dynsym_section_labels(FILE *handle, struct section_info *s_i
                     ptr->prev = ptr->next;
                     ptr->next->prev = tmp;
 
-                    tmp = ptr->next;
-                    ptr->next = ptr->next->next;
-                    ptr->next->next = tmp;
+                    tmp = ptr->next->next;
+                    ptr->next->next = ptr;
+                    ptr->next = tmp;
 
                     if (ptr->next)
                         ptr->next->prev = ptr;
@@ -1321,7 +1321,6 @@ enum ORCError parse_dynsym_section_labels(FILE *handle, struct section_info *s_i
 
                 for (ptr; ptr->prev; ptr = ptr->prev);
                 *head = ptr;
-                
 
                 break;
             case ORC_SYM_NOT_FOUND:
@@ -1353,8 +1352,19 @@ enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf3
         goto cleanup;
 
     for (struct dynsym_section_label *ptr = label_list; ptr; ptr = ptr->next) {
+        fprintf(stderr, "%s\n", ptr->name);
         if (!strcmp(ptr->name, "_end") || ((!strcmp(ptr->name, "_fbss") || !strcmp(ptr->name, "__bss_start")) && found_bss))
             continue;
+
+        /*
+            _init, _ftext, and _fini should be in adjacent sections
+            If they belong to the same section, then it seems to indicate
+            that there is not .init or .fini section
+        */
+        if (ptr->next && ptr->symbol.st_shndx == ptr->next->symbol.st_shndx && (!strcmp(ptr->name, "_init") || !strcmp(ptr->name, "_fini")) && (!strcmp(ptr->next->name, "_init") || !strcmp(ptr->next->name, "_fini") || !strcmp(ptr->next->name, "_ftext"))) {
+            ptr->next->prev = ptr->prev; /* remove from the section label list so it is not used for section boundary calculations */
+            continue;
+        }
 
         if (!strcmp(ptr->name, "_edata")) {
             /*
@@ -1434,6 +1444,8 @@ enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf3
 
         }
 
+        if (!sh.sh_size)
+            continue;
 
         if ((err = add_section_header(s_info, section_name, &sh, NULL, NULL)) != ORC_SUCCESS)
             goto cleanup;
