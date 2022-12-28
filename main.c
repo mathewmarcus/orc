@@ -8,7 +8,7 @@
 
 #include "orc.h"
 
-#define USAGE "%s [ -S section_headers_csv ] [ -s ghidra_symbols_csv ] [ -f ghidra_functions_csv ] elf-file\n"
+#define USAGE "%s [ -S section_headers_csv ] [ -s ghidra_symbols_csv ] elf-file\n"
 #define SHT_MIPS_ABIFLAGS 0x7000002a /* This is not included in elf.h */
 /* Nr,Name,Type,Addr,Offset,Size,EntSize,Flags,Link,Info,Alignment */
 #define CSV_FORMAT_STR "%m[^,],%u,0x%08x,0x%08x,%u,%u,%u,%u,%u,%u\n"
