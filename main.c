@@ -12,7 +12,7 @@
 #define SHT_MIPS_ABIFLAGS 0x7000002a /* This is not included in elf.h */
 /* Nr,Name,Type,Addr,Offset,Size,EntSize,Flags,Link,Info,Alignment */
 #define CSV_FORMAT_STR "%m[^,],%u,0x%08x,0x%08x,%u,%u,%u,%u,%u,%u\n"
-#define FUNC_CSV_FORMAT_STR "\"%m[^,\"]\",\"%x\",\"%i\"\n"
+#define FUNC_CSV_FORMAT_STR "\"%m[^\"]\",\"%x\",\"%i\"\n"
 #define NUM_DYNSYM_SECTION_LABELS 8
 
 #ifndef STO_MIPS16
