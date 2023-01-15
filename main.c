@@ -367,7 +367,7 @@ int main(int argc, char *argv[])
         if (parse_section_header_csv(csv_file, &s_info) != ORC_SUCCESS)
             goto err_exit;
 
-    if ((err = parse_sh_from_dynsym(handle, loadable_segments, num_loadable_segments, &s_info)) != ORC_SUCCESS)
+    if ((err = parse_sh_from_dynsym(handle, loadable_segments, num_loadable_segments, &s_info)) != ORC_SUCCESS && err != ORC_SYM_NOT_FOUND)
         goto err_exit;
 
 
@@ -1501,7 +1501,7 @@ enum ORCError parse_symtab_from_ghidra_csv(const char *sym_csv_filepath, struct 
             continue; /* skip CSV column headers */
 
         if ((num_matches = sscanf(lineptr, FUNC_CSV_FORMAT_STR, &sym_name, &sym.st_value, &sym.st_size)) != 3) {
-            fprintf(stderr, "%s is incorrectly formatted, only matched %i id 3 expected columns in line: %s\n", sym_csv_filepath, num_matches, lineptr);
+            fprintf(stderr, "%s is incorrectly formatted, only matched %i of 3 expected columns in line: %s\n", sym_csv_filepath, num_matches, lineptr);
             err = ORC_SECTION_HEADER_CSV_FORMAT_ERR;
             goto cleanup;
         }
@@ -1539,6 +1539,7 @@ enum ORCError parse_symtab_from_ghidra_csv(const char *sym_csv_filepath, struct 
     }
 
     fprintf(stderr, "Parsed %u symbols from %s\n", s_info->num_symbols, sym_csv_filepath);
+    err = ORC_SUCCESS;
     
 cleanup:
     free(lineptr);
