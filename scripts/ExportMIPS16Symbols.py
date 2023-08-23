@@ -13,11 +13,6 @@ from ghidra.program.model.symbol import SourceType
 
 output_file = askFile("Please Select Output File", "Choose")
 
-# This is necessary when exporting functions for shared objects,
-# which will already include a dynamic symbol table
-# Limiting the export to user-defined functions in those cases
-# will prevent the creation of duplicate symbols
-user_defined_only = askYesNo("Please Select Function Type", "User-Defined functions only?")
 program = getCurrentProgram()
 
 with open(output_file.getPath(), "w") as output_file:
@@ -29,9 +24,6 @@ with open(output_file.getPath(), "w") as output_file:
             continue
         
         addr = function.getEntryPoint()
-
-        if user_defined_only and getSymbolAt(addr).getSource() != SourceType.USER_DEFINED:
-            continue
 
         instruction_context = getInstructionAt(addr).getInstructionContext().getProcessorContext()
         isa_mode_register = instruction_context.getRegister("ISA_MODE")
