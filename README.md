@@ -162,7 +162,7 @@ Ghidra can be used to create such a CSV file, as described [here](#ghidra-integr
 3. Click `Refresh Script List`
 4. In the left navbar, find and run the MIPS/ExportMIPS16Symbols.py script, which will allow you to specify an output CSV into which the Ghidra-parsed function symbols will be saved.
 
-This CSV file can now be used in the `orc` invocation as described [here](#s-symbols_csv)
+This CSV file can now be used in the `orc` invocation as described [here](#-s-symbols_csv)
 
 ## TODO:
 * add support for other architectures/platforms besides MIPS
