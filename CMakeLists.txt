@@ -6,7 +6,6 @@ enable_testing()
 
 add_library(orc_obj OBJECT orc.c)
 add_executable(orc main.c $<TARGET_OBJECTS:orc_obj>)
-# add_executable(orc_breakpoints orc_breakpoints.c $<TARGET_OBJECTS:orc_obj>)
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
