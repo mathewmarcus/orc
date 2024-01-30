@@ -25,6 +25,11 @@ with open(output_file.getPath(), "w") as output_file:
         
         addr = function.getEntryPoint()
 
+        sym_type = getSymbolAt(addr).getSource()
+        # skip imported functions (SourceType.IMPORTED and SourceType.ANALYSIS)
+        if sym_type != SourceType.USER_DEFINED and sym_type != SourceType.DEFAULT:
+            continue
+
         instruction_context = getInstructionAt(addr).getInstructionContext().getProcessorContext()
         isa_mode_register = instruction_context.getRegister("ISA_MODE")
         isa_mode_value = instruction_context.getValue(isa_mode_register, False)
