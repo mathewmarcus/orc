@@ -3,7 +3,6 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include <endian.h>
 #include <getopt.h>
 
 #include "orc.h"
@@ -180,6 +179,11 @@ static struct dynsym_section_label dynsym_section_labels[NUM_DYNSYM_SECTION_LABE
     }
 };
 
+uint32_t (*h2w)(uint32_t) = h2le32;
+uint32_t (*w2h)(uint32_t) = le322h;
+uint16_t (*h2s)(uint16_t) = h2le16;
+uint16_t (*s2h)(uint16_t) = le162h;
+
 int main(int argc, char *argv[])
 {
     FILE *handle;
@@ -234,6 +238,13 @@ int main(int argc, char *argv[])
 
         fclose(handle);
         return 1;
+    }
+
+    if (elf_header.e_ident[EI_DATA] & ELFDATA2MSB) {
+        h2w = h2be32;
+        w2h = be322h;
+        h2s = h2be16;
+        s2h = be162h;
     }
 
     if (!IS_SUPPORTED_ARCH((&elf_header))) {

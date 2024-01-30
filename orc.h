@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <elf.h>
+#include <endian.h>
 
 #define IS_SUPPORTED_ARCH(elf_hdr) (elf_hdr->e_ident[EI_CLASS] & ELFCLASS32 && elf_hdr->e_ident[EI_DATA] & ELFDATA2MSB && be16toh(elf_hdr->e_machine) == EM_MIPS)
 #define IS_MIPS_NONPIC(elf_hdr) (elf_hdr->e_ident[EI_ABIVERSION] == 0x1 && (htobe32(elf_hdr->e_flags) & EF_MIPS_CPIC) && !(htobe32(elf_hdr->e_flags) & EF_MIPS_PIC))
@@ -46,4 +47,17 @@ enum ORCError parse_gnu_version_requirements_size(FILE *handle, Elf32_Off offset
 enum ORCError find_vaddr_segment(Elf32_Phdr *loadable_segs, Elf32_Half num_segs, Elf32_Addr vaddr, Elf32_Half *segment_index);
 
 
+extern uint32_t (*h2w)(uint32_t);
+extern uint32_t (*w2h)(uint32_t);
+extern uint16_t (*h2s)(uint16_t);
+extern uint16_t (*s2h)(uint16_t);
+
+uint32_t h2be32(uint32_t val);
+uint32_t h2le32(uint32_t val);
+uint32_t be322h(uint32_t val);
+uint32_t le322h(uint32_t val);
+uint16_t h2be16(uint16_t val);
+uint16_t h2le16(uint16_t val);
+uint16_t be162h(uint16_t val);
+uint16_t le162h(uint16_t val);
 #endif

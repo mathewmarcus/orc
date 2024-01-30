@@ -398,3 +398,35 @@ enum ORCError parse_gnu_version_requirements_size(FILE *handle, Elf32_Off offset
     return ORC_SUCCESS;
 
 }
+
+uint32_t h2be32(uint32_t val) {
+    return htobe32(val);
+}
+
+uint32_t h2le32(uint32_t val) {
+    return htole32(val);
+}
+
+uint32_t be322h(uint32_t val) {
+    return be32toh(val);
+}
+
+uint32_t le322h(uint32_t val) {
+    return le32toh(val);
+}
+
+uint16_t h2be16(uint16_t val) {
+    return htobe16(val);
+}
+
+uint16_t h2le16(uint16_t val) {
+    return htole16(val);
+}
+
+uint16_t be162h(uint16_t val) {
+    return be16toh(val);
+}
+
+uint16_t le162h(uint16_t val) {
+    return le16toh(val);
+}
