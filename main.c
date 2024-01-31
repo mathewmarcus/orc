@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <getopt.h>
+#include <sys/types.h>
 
 #include "orc.h"
 
