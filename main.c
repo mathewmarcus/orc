@@ -253,7 +253,7 @@ int main(int argc, char *argv[])
     }
 
     if (elf_header.e_shoff || elf_header.e_shnum) {
-        fprintf(stderr, "%s already contains %hu section headers at offset 0x%x\n", argv[optind], be16toh(elf_header.e_shnum), be32toh(elf_header.e_shoff));
+        fprintf(stderr, "%s already contains %hu section headers at offset 0x%x\n", argv[optind], s2h(elf_header.e_shnum), w2h(elf_header.e_shoff));
         goto err_exit;
     }
 
@@ -261,23 +261,23 @@ int main(int argc, char *argv[])
        goto err_exit;
 
     /* parse program header info */
-    Elf32_Half ph_num = be16toh(elf_header.e_phnum);
-    Elf32_Off ph_off = be32toh(elf_header.e_phoff);
+    Elf32_Half ph_num = s2h(elf_header.e_phnum);
+    Elf32_Off ph_off = w2h(elf_header.e_phoff);
     fprintf(stderr, "Found %hu program headers at offset %u\n", ph_num, ph_off);
 
     switch (find_program_headers(handle, ph_off, ph_num, PT_INTERP, &seg, &phdr_count)) {
         case ORC_SUCCESS:
             interp.sh_addr = seg->p_vaddr;
             interp.sh_addralign = seg->p_align;
-            if (seg->p_flags & htobe32(PF_R))
-                interp.sh_flags |= htobe32(SHF_ALLOC);
-            if (seg->p_flags & htobe32(PF_W))
-                interp.sh_flags |= htobe32(SHF_WRITE);
-            if (seg->p_flags & htobe32(PF_X))
-                interp.sh_flags |= htobe32(SHF_EXECINSTR);
+            if (seg->p_flags & h2w(PF_R))
+                interp.sh_flags |= h2w(SHF_ALLOC);
+            if (seg->p_flags & h2w(PF_W))
+                interp.sh_flags |= h2w(SHF_WRITE);
+            if (seg->p_flags & h2w(PF_X))
+                interp.sh_flags |= h2w(SHF_EXECINSTR);
             interp.sh_offset = seg->p_offset;
             interp.sh_size = seg->p_filesz;
-            interp.sh_type = htobe32(SHT_PROGBITS);
+            interp.sh_type = h2w(SHT_PROGBITS);
             if (add_section_header(&s_info, ".interp", &interp, NULL, NULL) != ORC_SUCCESS)
                 goto err_exit;
         case ORC_PHDR_NOT_FOUND:
@@ -290,15 +290,15 @@ int main(int argc, char *argv[])
         case ORC_SUCCESS:
             mips_abiflags.sh_addr = seg->p_vaddr;
             mips_abiflags.sh_addralign = seg->p_align;
-            if (seg->p_flags & htobe32(PF_R))
-                mips_abiflags.sh_flags |= htobe32(SHF_ALLOC);
-            if (seg->p_flags & htobe32(PF_W))
-                mips_abiflags.sh_flags |= htobe32(SHF_WRITE);
-            if (seg->p_flags & htobe32(PF_X))
-                mips_abiflags.sh_flags |= htobe32(SHF_EXECINSTR);
+            if (seg->p_flags & h2w(PF_R))
+                mips_abiflags.sh_flags |= h2w(SHF_ALLOC);
+            if (seg->p_flags & h2w(PF_W))
+                mips_abiflags.sh_flags |= h2w(SHF_WRITE);
+            if (seg->p_flags & h2w(PF_X))
+                mips_abiflags.sh_flags |= h2w(SHF_EXECINSTR);
             mips_abiflags.sh_offset = seg->p_offset;
             mips_abiflags.sh_size = seg->p_filesz;
-            mips_abiflags.sh_type = htobe32(SHT_MIPS_ABIFLAGS);
+            mips_abiflags.sh_type = h2w(SHT_MIPS_ABIFLAGS);
             if (add_section_header(&s_info, ".MIPS.abiflags", &mips_abiflags, NULL, NULL) != ORC_SUCCESS)
                 goto err_exit;
         case ORC_PHDR_NOT_FOUND:
@@ -311,15 +311,15 @@ int main(int argc, char *argv[])
         case ORC_SUCCESS:
             reginfo.sh_addr = seg->p_vaddr;
             reginfo.sh_addralign = seg->p_align;
-            if (seg->p_flags & htobe32(PF_R))
-                reginfo.sh_flags |= htobe32(SHF_ALLOC);
-            if (seg->p_flags & htobe32(PF_W))
-                reginfo.sh_flags |= htobe32(SHF_WRITE);
-            if (seg->p_flags & htobe32(PF_X))
-                reginfo.sh_flags |= htobe32(SHF_EXECINSTR);
+            if (seg->p_flags & h2w(PF_R))
+                reginfo.sh_flags |= h2w(SHF_ALLOC);
+            if (seg->p_flags & h2w(PF_W))
+                reginfo.sh_flags |= h2w(SHF_WRITE);
+            if (seg->p_flags & h2w(PF_X))
+                reginfo.sh_flags |= h2w(SHF_EXECINSTR);
             reginfo.sh_offset = seg->p_offset;
             reginfo.sh_size = seg->p_filesz;
-            reginfo.sh_type = htobe32(SHT_MIPS_REGINFO);
+            reginfo.sh_type = h2w(SHT_MIPS_REGINFO);
             if (add_section_header(&s_info, ".reginfo", &reginfo, NULL, NULL) != ORC_SUCCESS)
                 goto err_exit;
         case ORC_PHDR_NOT_FOUND:
@@ -332,15 +332,15 @@ int main(int argc, char *argv[])
         case ORC_SUCCESS:
             sh.sh_addr = seg->p_vaddr;
             sh.sh_addralign = seg->p_align;
-            if (seg->p_flags & htobe32(PF_R))
-                sh.sh_flags |= htobe32(SHF_ALLOC);
-            if (seg->p_flags & htobe32(PF_W))
-                sh.sh_flags |= htobe32(SHF_WRITE);
-            if (seg->p_flags & htobe32(PF_X))
-                sh.sh_flags |= htobe32(SHF_EXECINSTR);
+            if (seg->p_flags & h2w(PF_R))
+                sh.sh_flags |= h2w(SHF_ALLOC);
+            if (seg->p_flags & h2w(PF_W))
+                sh.sh_flags |= h2w(SHF_WRITE);
+            if (seg->p_flags & h2w(PF_X))
+                sh.sh_flags |= h2w(SHF_EXECINSTR);
             sh.sh_offset = seg->p_offset;
             sh.sh_size = seg->p_filesz;
-            sh.sh_type = htobe32(SHT_PROGBITS);
+            sh.sh_type = h2w(SHT_PROGBITS);
             if (add_section_header(&s_info, ".eh_frame_hdr", &sh, NULL, NULL) != ORC_SUCCESS)
                 goto err_exit;
         case ORC_PHDR_NOT_FOUND:
@@ -376,9 +376,9 @@ int main(int argc, char *argv[])
 
 
     for (hdr_ptr = s_info.csv_headers; hdr_ptr->next; hdr_ptr = hdr_ptr->next) {
-        fprintf(stderr, "%s: 0x%x : 0x%x\n", hdr_ptr->name, be32toh(hdr_ptr->header.sh_addr), be32toh(hdr_ptr->header.sh_size));
+        fprintf(stderr, "%s: 0x%x : 0x%x\n", hdr_ptr->name, w2h(hdr_ptr->header.sh_addr), w2h(hdr_ptr->header.sh_size));
     }
-    fprintf(stderr, "%s: 0x%x : 0x%x\n", hdr_ptr->name, be32toh(hdr_ptr->header.sh_addr), be32toh(hdr_ptr->header.sh_size));
+    fprintf(stderr, "%s: 0x%x : 0x%x\n", hdr_ptr->name, w2h(hdr_ptr->header.sh_addr), w2h(hdr_ptr->header.sh_size));
 
 
     if (fseek(handle, 0L, SEEK_END) == -1 || (offset = ftell(handle)) == -1)
@@ -389,7 +389,7 @@ int main(int argc, char *argv[])
     }
     fprintf(stderr, "File %s size: 0x%lx bytes\n", argv[optind], offset);
 
-    Elf32_Word section_end = be32toh(hdr_ptr->header.sh_type) == SHT_NOBITS ? be32toh(hdr_ptr->header.sh_offset): be32toh(hdr_ptr->header.sh_offset) + be32toh(hdr_ptr->header.sh_size);
+    Elf32_Word section_end = w2h(hdr_ptr->header.sh_type) == SHT_NOBITS ? w2h(hdr_ptr->header.sh_offset): w2h(hdr_ptr->header.sh_offset) + w2h(hdr_ptr->header.sh_size);
     if (section_end > offset) {
         if (fseek(handle, section_end-offset, SEEK_CUR) == -1) {
             fprintf(stderr, "Failed to seek to section header end offset at 0x%x in %s: %s\n", section_end, argv[optind], strerror(errno));
@@ -417,20 +417,20 @@ int main(int argc, char *argv[])
             goto err_exit;
         }
         sh.sh_addr = sh.sh_flags = 0;
-        sh.sh_addralign = htobe32(4);
-        sh.sh_entsize = htobe32(sizeof(Elf32_Sym));
+        sh.sh_addralign = h2w(4);
+        sh.sh_entsize = h2w(sizeof(Elf32_Sym));
         /*
             One greater than the symbol table index of the last local symbol. 
             https://docs.oracle.com/cd/E19455-01/806-3773/6jct9o0bs/index.html#elf-15226
             since we are only parsing Global symbols from Ghidra, this will always be 1
         */
-        sh.sh_info = htobe32(1);
-        sh.sh_offset = htobe32(offset);
-        sh.sh_size = htobe32(s_info.num_symbols * sizeof(Elf32_Sym));
-        sh.sh_type = htobe32(SHT_SYMTAB);
+        sh.sh_info = h2w(1);
+        sh.sh_offset = h2w(offset);
+        sh.sh_size = h2w(s_info.num_symbols * sizeof(Elf32_Sym));
+        sh.sh_type = h2w(SHT_SYMTAB);
         if (add_section_header(&s_info, ".symtab", &sh, ".strtab", NULL) != ORC_SUCCESS)
             goto err_exit;
-        offset += be32toh(sh.sh_size);
+        offset += w2h(sh.sh_size);
 
         if (fwrite(s_info.strtab, s_info.strtab_len, 1, handle) != 1)
         {
@@ -438,13 +438,13 @@ int main(int argc, char *argv[])
             goto err_exit;
         }
         sh.sh_addr = sh.sh_flags = sh.sh_info = sh.sh_link = sh.sh_entsize = 0;
-        sh.sh_addralign = htobe32(1);
-        sh.sh_offset = htobe32(offset);
-        sh.sh_size = htobe32(s_info.strtab_len);
-        sh.sh_type = htobe32(SHT_STRTAB);
+        sh.sh_addralign = h2w(1);
+        sh.sh_offset = h2w(offset);
+        sh.sh_size = h2w(s_info.strtab_len);
+        sh.sh_type = h2w(SHT_STRTAB);
         if (add_section_header(&s_info, ".strtab", &sh, NULL, NULL) != ORC_SUCCESS)
             goto err_exit;
-        offset += be32toh(sh.sh_size);
+        offset += w2h(sh.sh_size);
     }
 
     if (offset % 32)
@@ -464,11 +464,11 @@ int main(int argc, char *argv[])
     .shstrtab
     */
     Elf32_Shdr shstrtab_header = {0};
-    shstrtab_header.sh_name = htobe32(s_info.num_headers - 1);
-    shstrtab_header.sh_type = htobe32(SHT_STRTAB);
-    shstrtab_header.sh_offset = htobe32(offset);
-    shstrtab_header.sh_size = htobe32(s_info.shstrtab_len + strlen(".shstrtab") + 1); /* plus terminating \0 */
-    shstrtab_header.sh_addralign = htobe32(1);
+    shstrtab_header.sh_name = h2w(s_info.num_headers - 1);
+    shstrtab_header.sh_type = h2w(SHT_STRTAB);
+    shstrtab_header.sh_offset = h2w(offset);
+    shstrtab_header.sh_size = h2w(s_info.shstrtab_len + strlen(".shstrtab") + 1); /* plus terminating \0 */
+    shstrtab_header.sh_addralign = h2w(1);
 
     if (add_section_header(&s_info, ".shstrtab", &shstrtab_header, NULL, NULL) != ORC_SUCCESS)
         goto err_exit;
@@ -509,10 +509,10 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    elf_header.e_shentsize = htobe16(sizeof(Elf32_Shdr));
-    elf_header.e_shnum = htobe16(s_info.num_headers);
-    elf_header.e_shoff = htobe32(offset);
-    elf_header.e_shstrndx = htobe16(s_info.num_headers - 1);
+    elf_header.e_shentsize = h2s(sizeof(Elf32_Shdr));
+    elf_header.e_shnum = h2s(s_info.num_headers);
+    elf_header.e_shoff = h2w(offset);
+    elf_header.e_shstrndx = h2s(s_info.num_headers - 1);
 
     if (fseek(handle, 0, SEEK_SET) == -1) {
         fprintf(stderr, "Failed to seek to beginning of %s: %s\n", argv[optind], strerror(errno));
@@ -550,7 +550,7 @@ enum ORCError add_shstrtab_entry(struct section_info *s_info, const char *name, 
         return ORC_CRITICIAL;
     }
     strcpy(s_info->shstrtab + s_info->shstrtab_len, name);
-    sh->sh_name = htobe32(s_info->shstrtab_len);
+    sh->sh_name = h2w(s_info->shstrtab_len);
     s_info->shstrtab_len += name_len;
 
     return ORC_SUCCESS;
@@ -577,7 +577,7 @@ enum ORCError add_section_header(struct section_info *s_info, const char *name, 
     if (s_info->csv_headers)
         s_info->csv_headers->prev = node;
 
-    while (node->next && be32toh(node->header.sh_offset) >= be32toh(node->next->header.sh_offset))
+    while (node->next && w2h(node->header.sh_offset) >= w2h(node->next->header.sh_offset))
     {
         if (node->prev != NULL)
             node->prev->next = node->next;
@@ -623,14 +623,14 @@ enum ORCError build_section_headers(struct section_info *s_info) {
             if ((idx = find_referenced_section(s_info, node->info)) == -1)
                 fprintf(stderr, "Failed to find info section %s for section %s\n", node->info, node->name);
             else
-                node->header.sh_info = htobe32(idx);
+                node->header.sh_info = h2w(idx);
 
         }
         if (node->link) {
             if ((idx = find_referenced_section(s_info, node->link)) == -1)
                 fprintf(stderr, "Failed to find link section %s for section %s\n", node->info, node->name);
             else
-                node->header.sh_link = htobe32(idx);
+                node->header.sh_link = h2w(idx);
         }
         s_info->num_headers++;
     }
@@ -659,8 +659,8 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     Elf32_Shdr dynamic = { 0 }, dynstr = { 0 }, dynsym = { 0 }, got = { 0 }, rld_map = { 0 }, mips_stubs = { 0 }, hash = { 0 }, gnu_version = { 0 };
     Elf32_Dyn dynamic_tag;
     Elf32_Addr base_addr = 0, got_entry;
-    Elf32_Off dyn_seg_offset = be32toh(dyn_seg->p_offset), got_off, dynsym_off;
-    Elf32_Word dyn_seg_size = be32toh(dyn_seg->p_filesz), syment, symtabno, mips_local_gotno, mips_gotsym, mips_external_gotno, mips_stub_count;
+    Elf32_Off dyn_seg_offset = w2h(dyn_seg->p_offset), got_off, dynsym_off;
+    Elf32_Word dyn_seg_size = w2h(dyn_seg->p_filesz), syment, symtabno, mips_local_gotno, mips_gotsym, mips_external_gotno, mips_stub_count;
     Elf32_Sym sym;
     /*
         TODO
@@ -675,7 +675,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         default:
             return err;
     }
-    base_addr = be32toh(dynamic_tag.d_un.d_ptr);
+    base_addr = w2h(dynamic_tag.d_un.d_ptr);
     fprintf(stderr, "Found MIPS base address at 0x%x\n", base_addr);
 
 
@@ -688,7 +688,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
             return err;
     }
     dynstr.sh_addr = dynamic_tag.d_un.d_ptr;
-    fprintf(stderr, "Found DT_STRTAB at 0x%x\n", be32toh(dynstr.sh_addr));
+    fprintf(stderr, "Found DT_STRTAB at 0x%x\n", w2h(dynstr.sh_addr));
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_STRSZ, &dynamic_tag))) {
         case ORC_SUCCESS:
@@ -699,29 +699,29 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
             return err;
     }
     dynstr.sh_size = dynamic_tag.d_un.d_val;
-    fprintf(stderr, "Found DT_STRSZ at %u\n", be32toh(dynstr.sh_size));
+    fprintf(stderr, "Found DT_STRSZ at %u\n", w2h(dynstr.sh_size));
 
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(dynstr.sh_addr), &dynstr.sh_offset)) != ORC_SUCCESS)
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, w2h(dynstr.sh_addr), &dynstr.sh_offset)) != ORC_SUCCESS)
         return err;
-    dynstr.sh_addralign = htobe32(1);
-    dynstr.sh_type = htobe32(SHT_STRTAB);
-    dynstr.sh_flags = htobe32(SHF_ALLOC);
+    dynstr.sh_addralign = h2w(1);
+    dynstr.sh_type = h2w(SHT_STRTAB);
+    dynstr.sh_flags = h2w(SHF_ALLOC);
 
     if ((err = add_section_header(s_info, ".dynstr", &dynstr, NULL, NULL)) != ORC_SUCCESS)
         return err;
 
     dynamic.sh_addr = dyn_seg->p_vaddr;
     dynamic.sh_addralign = dyn_seg->p_align;
-    dynamic.sh_entsize = htobe32(sizeof(Elf32_Dyn));
-    if (dyn_seg->p_flags & htobe32(PF_R))
-        dynamic.sh_flags |= htobe32(SHF_ALLOC);
-    if (dyn_seg->p_flags & htobe32(PF_W))
-        dynamic.sh_flags |= htobe32(SHF_WRITE);
-    if (dyn_seg->p_flags & htobe32(PF_X))
-        dynamic.sh_flags |= htobe32(SHF_EXECINSTR);
+    dynamic.sh_entsize = h2w(sizeof(Elf32_Dyn));
+    if (dyn_seg->p_flags & h2w(PF_R))
+        dynamic.sh_flags |= h2w(SHF_ALLOC);
+    if (dyn_seg->p_flags & h2w(PF_W))
+        dynamic.sh_flags |= h2w(SHF_WRITE);
+    if (dyn_seg->p_flags & h2w(PF_X))
+        dynamic.sh_flags |= h2w(SHF_EXECINSTR);
     dynamic.sh_offset = dyn_seg->p_offset;
     dynamic.sh_size = dyn_seg->p_filesz; /* Practical Binary Analysis, 2.4.3 */
-    dynamic.sh_type = htobe32(SHT_DYNAMIC);
+    dynamic.sh_type = h2w(SHT_DYNAMIC);
 
     if ((err = add_section_header(s_info, ".dynamic", &dynamic, ".dynstr", NULL)) != ORC_SUCCESS)
         return err;
@@ -735,7 +735,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
             return err;
     }
     dynsym.sh_addr = dynamic_tag.d_un.d_ptr;
-    fprintf(stderr, "Found DT_SYMTAB at 0x%x\n", be32toh(dynsym.sh_addr));
+    fprintf(stderr, "Found DT_SYMTAB at 0x%x\n", w2h(dynsym.sh_addr));
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_SYMENT, &dynamic_tag))) {
         case ORC_SUCCESS:
@@ -745,7 +745,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         default:
             return err;
     }
-    syment = be32toh(dynamic_tag.d_un.d_val);
+    syment = w2h(dynamic_tag.d_un.d_val);
     fprintf(stderr, "Found DT_SYMENT at 0x%x\n", syment);
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_SYMTABNO, &dynamic_tag))) {
@@ -756,21 +756,21 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         default:
             return err;
     }
-    symtabno = be32toh(dynamic_tag.d_un.d_val);
+    symtabno = w2h(dynamic_tag.d_un.d_val);
     fprintf(stderr, "Found DT_MIPS_SYMTABNO at 0x%x\n", symtabno);
 
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(dynsym.sh_addr), &dynsym.sh_offset)) != ORC_SUCCESS)
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, w2h(dynsym.sh_addr), &dynsym.sh_offset)) != ORC_SUCCESS)
         return err;
-    dynsym.sh_type = htobe32(SHT_DYNSYM);
-    dynsym.sh_flags = htobe32(SHF_ALLOC);
-    dynsym.sh_size = htobe32(syment * symtabno);
-    dynsym.sh_entsize = htobe32(syment);
+    dynsym.sh_type = h2w(SHT_DYNSYM);
+    dynsym.sh_flags = h2w(SHF_ALLOC);
+    dynsym.sh_size = h2w(syment * symtabno);
+    dynsym.sh_entsize = h2w(syment);
     /*
         One greater than the symbol table index of the last local symbol. 
         https://docs.oracle.com/cd/E19455-01/806-3773/6jct9o0bs/index.html#elf-15226
         since this is the dynamic string table, this will always be 1
     */
-    dynsym.sh_info = htobe32(1);
+    dynsym.sh_info = h2w(1);
 
     if ((err = add_section_header(s_info, ".dynsym", &dynsym, ".dynstr", NULL)) != ORC_SUCCESS)
         return err;
@@ -790,11 +790,11 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_VERSYM, &dynamic_tag))) {
         case ORC_SUCCESS: /* https://refspecs.linuxfoundation.org/LSB_3.0.0/LSB-PDA/LSB-PDA.junk/symversion.html */
             gnu_version.sh_addr = dynamic_tag.d_un.d_ptr;
-            gnu_version.sh_addralign = gnu_version.sh_entsize = htobe32(sizeof(Elf32_Half));
-            gnu_version.sh_flags = htobe32(SHF_ALLOC);
-            gnu_version.sh_size = htobe32(symtabno * sizeof(Elf32_Half));
-            gnu_version.sh_type = htobe32(SHT_GNU_versym);
-            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(gnu_version.sh_addr), &gnu_version.sh_offset)) != ORC_SUCCESS)
+            gnu_version.sh_addralign = gnu_version.sh_entsize = h2w(sizeof(Elf32_Half));
+            gnu_version.sh_flags = h2w(SHF_ALLOC);
+            gnu_version.sh_size = h2w(symtabno * sizeof(Elf32_Half));
+            gnu_version.sh_type = h2w(SHT_GNU_versym);
+            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, w2h(gnu_version.sh_addr), &gnu_version.sh_offset)) != ORC_SUCCESS)
                 return err;
             if ((err = add_section_header(s_info, ".gnu.version", &gnu_version, ".dynsym", NULL)) != ORC_SUCCESS)
                 return err;
@@ -811,15 +811,15 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_HASH, &dynamic_tag))) {
         case ORC_SUCCESS:
-            fprintf(stderr, "Found HASH at 0x%x\n", be32toh(dynamic_tag.d_un.d_ptr));
-            // elf_header->e_ident[EI_CLASS] & ELFCLASS64 ? htobe64(8) : htobe32(4)
+            fprintf(stderr, "Found HASH at 0x%x\n", w2h(dynamic_tag.d_un.d_ptr));
+            // elf_header->e_ident[EI_CLASS] & ELFCLASS64 ? htobe64(8) : h2w(4)
             hash.sh_addr = dynamic_tag.d_un.d_ptr;
-            hash.sh_addralign = hash.sh_entsize = htobe32(sizeof(Elf32_Addr));
-            hash.sh_flags = htobe32(SHF_ALLOC);
-            hash.sh_offset = dynamic_tag.d_un.d_ptr - htobe32(base_addr);
+            hash.sh_addralign = hash.sh_entsize = h2w(sizeof(Elf32_Addr));
+            hash.sh_flags = h2w(SHF_ALLOC);
+            hash.sh_offset = dynamic_tag.d_un.d_ptr - h2w(base_addr);
             if ((err = calculate_hash_size(handle, &hash)) != ORC_SUCCESS)
                 return err;
-            hash.sh_type = htobe32(SHT_HASH);
+            hash.sh_type = h2w(SHT_HASH);
             if ((err = add_section_header(s_info, ".hash", &hash, ".dynsym", NULL)) != ORC_SUCCESS)
                 return err;
             break;
@@ -834,7 +834,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_PLTGOT, &dynamic_tag))) {
         case ORC_SUCCESS:
             got.sh_addr = dynamic_tag.d_un.d_ptr;
-            fprintf(stderr, "Found DT_PLTGOT: 0x%x\n", be32toh(got.sh_addr));
+            fprintf(stderr, "Found DT_PLTGOT: 0x%x\n", w2h(got.sh_addr));
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_PLTGOT dynamic tag\n");
@@ -845,7 +845,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_LOCAL_GOTNO, &dynamic_tag))) {
         case ORC_SUCCESS:
-            mips_local_gotno = be32toh(dynamic_tag.d_un.d_val);
+            mips_local_gotno = w2h(dynamic_tag.d_un.d_val);
             fprintf(stderr, "Found DT_MIPS_LOCAL_GOTNO: 0x%x\n", mips_local_gotno);
             break;
         case ORC_DYN_TAG_NOT_FOUND:
@@ -857,7 +857,7 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
 
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_GOTSYM, &dynamic_tag))) {
         case ORC_SUCCESS:
-            mips_gotsym = be32toh(dynamic_tag.d_un.d_val);
+            mips_gotsym = w2h(dynamic_tag.d_un.d_val);
             fprintf(stderr, "Found DT_MIPS_GOTSYM: 0x%x\n", mips_gotsym);
             break;
         case ORC_DYN_TAG_NOT_FOUND:
@@ -866,13 +866,13 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         default:
             return err;
     }
-    got.sh_addralign = htobe32(16);
-    got.sh_entsize = htobe32(4);
-    got.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE) | htobe32(SHF_MIPS_GPREL);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(got.sh_addr), &got.sh_offset)) != ORC_SUCCESS)
+    got.sh_addralign = h2w(16);
+    got.sh_entsize = h2w(4);
+    got.sh_flags = h2w(SHF_ALLOC) | h2w(SHF_WRITE) | h2w(SHF_MIPS_GPREL);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, w2h(got.sh_addr), &got.sh_offset)) != ORC_SUCCESS)
         return err;
-    got.sh_size = htobe32(((symtabno - mips_gotsym) + mips_local_gotno) * be32toh(got.sh_entsize));
-    got.sh_type = htobe32(SHT_PROGBITS);
+    got.sh_size = h2w(((symtabno - mips_gotsym) + mips_local_gotno) * w2h(got.sh_entsize));
+    got.sh_type = h2w(SHT_PROGBITS);
 
     if ((err = add_section_header(s_info, ".got", &got, NULL, NULL)) != ORC_SUCCESS)
         return err;
@@ -881,13 +881,13 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_RLD_MAP, &dynamic_tag))) {
         case ORC_SUCCESS:
             rld_map.sh_addr = dynamic_tag.d_un.d_ptr;
-            fprintf(stderr, "Found DT_MIPS_RLD_MAP: 0x%x\n", be32toh(rld_map.sh_addr));
-            rld_map.sh_addralign = htobe32(4); /* size of instruction */
-            rld_map.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE);
-            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(rld_map.sh_addr), &rld_map.sh_offset)) != ORC_SUCCESS)
+            fprintf(stderr, "Found DT_MIPS_RLD_MAP: 0x%x\n", w2h(rld_map.sh_addr));
+            rld_map.sh_addralign = h2w(4); /* size of instruction */
+            rld_map.sh_flags = h2w(SHF_ALLOC) | h2w(SHF_WRITE);
+            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, w2h(rld_map.sh_addr), &rld_map.sh_offset)) != ORC_SUCCESS)
                 return err;
-            rld_map.sh_size = htobe32(4); /* size of instruction */
-            rld_map.sh_type = htobe32(SHT_PROGBITS);
+            rld_map.sh_size = h2w(4); /* size of instruction */
+            rld_map.sh_type = h2w(SHT_PROGBITS);
 
             if ((err = add_section_header(s_info, ".rld_map", &rld_map, NULL, NULL)) != ORC_SUCCESS)
                 return err;
@@ -919,8 +919,8 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         parse MIPS stubs
     */
     mips_external_gotno = symtabno - mips_gotsym;
-    got_off = be32toh(got.sh_offset) + (be32toh(got.sh_entsize) * mips_local_gotno);
-    dynsym_off = be32toh(dynsym.sh_offset) + (be32toh(dynsym.sh_entsize) * mips_gotsym);
+    got_off = w2h(got.sh_offset) + (w2h(got.sh_entsize) * mips_local_gotno);
+    dynsym_off = w2h(dynsym.sh_offset) + (w2h(dynsym.sh_entsize) * mips_gotsym);
     fprintf(stderr, "GOT offset: 0x%x\ndynsym offset: 0x%x\nnum external gotno: %u\n", got_off, dynsym_off, mips_external_gotno);
 
     err = get_mips_stub_info(
@@ -928,8 +928,8 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
         mips_external_gotno,
         got_off,
         dynsym_off,
-        be32toh(got.sh_entsize),
-        be32toh(dynsym.sh_entsize),
+        w2h(got.sh_entsize),
+        w2h(dynsym.sh_entsize),
         &mips_stub_count,
         &mips_stubs.sh_addr
     );
@@ -940,12 +940,12 @@ enum ORCError parse_dynamic_segment(FILE *handle, Elf32_Phdr *dyn_seg, Elf32_Phd
     if (!mips_stub_count)
         fprintf(stderr, "No .MIPS.stubs detected\n");
     else {
-        mips_stubs.sh_addralign = htobe32(sizeof(Elf32_Addr));
-        mips_stubs.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_EXECINSTR);
-        if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(mips_stubs.sh_addr), &mips_stubs.sh_offset)) != ORC_SUCCESS)
+        mips_stubs.sh_addralign = h2w(sizeof(Elf32_Addr));
+        mips_stubs.sh_flags = h2w(SHF_ALLOC) | h2w(SHF_EXECINSTR);
+        if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, w2h(mips_stubs.sh_addr), &mips_stubs.sh_offset)) != ORC_SUCCESS)
             return err;
-        mips_stubs.sh_size = htobe32(sizeof(Elf32_Addr) * 4 * (mips_stub_count + 1)); /* are stubs always 4 instructions? are they always terminated with a null stub? */
-        mips_stubs.sh_type = htobe32(SHT_PROGBITS);
+        mips_stubs.sh_size = h2w(sizeof(Elf32_Addr) * 4 * (mips_stub_count + 1)); /* are stubs always 4 instructions? are they always terminated with a null stub? */
+        mips_stubs.sh_type = h2w(SHT_PROGBITS);
 
         if ((err = add_section_header(s_info, ".MIPS.stubs", &mips_stubs, NULL, NULL)) != ORC_SUCCESS)
             return err;
@@ -981,7 +981,7 @@ enum ORCError parse_mips_nonpic(
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_PLTGOT, &dynamic_tag))) {
         case ORC_SUCCESS:
             got_plt.sh_addr = dynamic_tag.d_un.d_ptr;
-            fprintf(stderr, "Found DT_MIPS_PLTGOT: 0x%x\n", be32toh(got_plt.sh_addr));
+            fprintf(stderr, "Found DT_MIPS_PLTGOT: 0x%x\n", w2h(got_plt.sh_addr));
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_MIPS_PLTGOT dynamic tag\n");
@@ -989,17 +989,17 @@ enum ORCError parse_mips_nonpic(
             return err;
     }
 
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(rel_plt.sh_addr), &rel_plt.sh_offset)) != ORC_SUCCESS)
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, w2h(rel_plt.sh_addr), &rel_plt.sh_offset)) != ORC_SUCCESS)
         return err;
     /*
         This section headers sh_info field holds a section header table index.
         https://docs.oracle.com/cd/E23824_01/html/819-0690/chapter6-94076.html
     */
-    rel_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_INFO_LINK);
-    rel_plt.sh_type = htobe32(SHT_REL);
+    rel_plt.sh_flags = h2w(SHF_ALLOC) | h2w(SHF_INFO_LINK);
+    rel_plt.sh_type = h2w(SHT_REL);
 
     Elf32_Word num_jump_slot_relocs;
-    if ((err = count_mips_jump_slot_relocs(handle, be32toh(rel_plt.sh_offset), be32toh(rel_plt.sh_size), &num_jump_slot_relocs)) != ORC_SUCCESS)
+    if ((err = count_mips_jump_slot_relocs(handle, w2h(rel_plt.sh_offset), w2h(rel_plt.sh_size), &num_jump_slot_relocs)) != ORC_SUCCESS)
         return err;
 
     /* 
@@ -1007,12 +1007,12 @@ enum ORCError parse_mips_nonpic(
         multiplied by the size of a MIPS32 address (4 bytes)
 
     */
-    got_plt.sh_size = htobe32((num_jump_slot_relocs + 2) * 4);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(got_plt.sh_addr), &got_plt.sh_offset)) != ORC_SUCCESS)
+    got_plt.sh_size = h2w((num_jump_slot_relocs + 2) * 4);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, w2h(got_plt.sh_addr), &got_plt.sh_offset)) != ORC_SUCCESS)
         return err;
-    got_plt.sh_type = htobe32(SHT_PROGBITS);
-    got_plt.sh_flags = htobe32(SHF_ALLOC) | htobe32(SHF_WRITE);
-    got_plt.sh_entsize = htobe32(4); /* based on architecture address length */
+    got_plt.sh_type = h2w(SHT_PROGBITS);
+    got_plt.sh_flags = h2w(SHF_ALLOC) | h2w(SHF_WRITE);
+    got_plt.sh_entsize = h2w(4); /* based on architecture address length */
 
     if ((err = add_section_header(s_info, ".got.plt", &got_plt, NULL, NULL)) != ORC_SUCCESS)
         return err;
@@ -1021,8 +1021,8 @@ enum ORCError parse_mips_nonpic(
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_MIPS_RWPLT, &dynamic_tag))) {
         case ORC_SUCCESS:
             plt.sh_addr = dynamic_tag.d_un.d_ptr;
-            plt.sh_flags |= htobe32(SHF_WRITE);
-            fprintf(stderr, "Found DT_MIPS_RWPLT: 0x%x\n", be32toh(plt.sh_addr));
+            plt.sh_flags |= h2w(SHF_WRITE);
+            fprintf(stderr, "Found DT_MIPS_RWPLT: 0x%x\n", w2h(plt.sh_addr));
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_MIPS_RWPLT dynamic tag\n");
@@ -1032,14 +1032,14 @@ enum ORCError parse_mips_nonpic(
     }
 
     if (!plt.sh_addr) {
-        if (fseek(handle, be32toh(got_plt.sh_offset) + 8, SEEK_SET) == -1) {
-            fprintf(stderr, "Failed to seek to .got.plt + 8 sectoin at offset 0x%x: %s\n", be32toh(got_plt.sh_offset) + 8, strerror(errno));
+        if (fseek(handle, w2h(got_plt.sh_offset) + 8, SEEK_SET) == -1) {
+            fprintf(stderr, "Failed to seek to .got.plt + 8 sectoin at offset 0x%x: %s\n", w2h(got_plt.sh_offset) + 8, strerror(errno));
             return ORC_CRITICIAL;
         }
         if (fread(&plt.sh_addr, 4, 1, handle) != 1)
         {
             if (ferror(handle)) {
-                fprintf(stderr, "Failed to read .got.plt at offset 0x%x\n", be32toh(got_plt.sh_offset) + 8);
+                fprintf(stderr, "Failed to read .got.plt at offset 0x%x\n", w2h(got_plt.sh_offset) + 8);
                 return ORC_FILE_IO_ERR;
             }
             fprintf(stderr, "Invalid .got.plt section\n");
@@ -1047,16 +1047,16 @@ enum ORCError parse_mips_nonpic(
         }
     }
 
-    plt.sh_addralign = htobe32(32);
-    plt.sh_flags |= htobe32(SHF_ALLOC | SHF_EXECINSTR);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(plt.sh_addr), &plt.sh_offset)) != ORC_SUCCESS)
+    plt.sh_addralign = h2w(32);
+    plt.sh_flags |= h2w(SHF_ALLOC | SHF_EXECINSTR);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, w2h(plt.sh_addr), &plt.sh_offset)) != ORC_SUCCESS)
         return err;
     /*
         number of MIPS_JUMP_SLOT relocations * 16 + sizeof(PLT header)
         https://sourceware.org/legacy-ml/binutils/2008-07/txt00000.txt
     */
-    plt.sh_size = htobe32(((num_jump_slot_relocs > 65535 ? 32 : 16) * num_jump_slot_relocs) + 32);
-    plt.sh_type = htobe32(SHT_PROGBITS);
+    plt.sh_size = h2w(((num_jump_slot_relocs > 65535 ? 32 : 16) * num_jump_slot_relocs) + 32);
+    plt.sh_type = h2w(SHT_PROGBITS);
 
     if ((err = add_section_header(s_info, ".plt", &plt, NULL, NULL)) != ORC_SUCCESS)
         return err;
@@ -1104,26 +1104,26 @@ enum ORCError parse_dynamic_relocation_section(
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_REL, &dynamic_tag))) {
         case ORC_SUCCESS:
             section_hdr.sh_addr = dynamic_tag.d_un.d_ptr;
-            section_hdr.sh_type = htobe32(SHT_REL);
+            section_hdr.sh_type = h2w(SHT_REL);
             reloc_entry_size_tag = DT_RELENT;
             reloc_table_size_tag = DT_RELSZ;
             reloc_entry_size_tag_name = "DT_RELENT";
             reloc_table_size_tag_name = "DT_RELSZ";
             sh_name = ".rel.dyn";
-            fprintf(stderr, "Found DT_REL: 0x%x\n", be32toh(section_hdr.sh_addr));
+            fprintf(stderr, "Found DT_REL: 0x%x\n", w2h(section_hdr.sh_addr));
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_REL dynamic tag\n");
             switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_RELA, &dynamic_tag))) {
                 case ORC_SUCCESS:
                     section_hdr.sh_addr = dynamic_tag.d_un.d_ptr;
-                    section_hdr.sh_type = htobe32(SHT_RELA);
+                    section_hdr.sh_type = h2w(SHT_RELA);
                     reloc_entry_size_tag = DT_RELAENT;
                     reloc_table_size_tag = DT_RELASZ;
                     reloc_entry_size_tag_name = "DT_RELAENT";
                     reloc_table_size_tag_name = "DT_RELASZ";
                     sh_name = ".rela.dyn";
-                    fprintf(stderr, "Found DT_RELA: 0x%x\n", be32toh(section_hdr.sh_addr));
+                    fprintf(stderr, "Found DT_RELA: 0x%x\n", w2h(section_hdr.sh_addr));
                     break;
                 case ORC_DYN_TAG_NOT_FOUND: /* This means there are not dynamic relocations */
                     fprintf(stderr, "Failed to find DT_RELA dynamic tag\n");
@@ -1136,7 +1136,7 @@ enum ORCError parse_dynamic_relocation_section(
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, reloc_entry_size_tag, &dynamic_tag))) {
         case ORC_SUCCESS:
             section_hdr.sh_entsize = dynamic_tag.d_un.d_val;
-            fprintf(stderr, "Found %s: %u\n", reloc_entry_size_tag_name, be32toh(section_hdr.sh_entsize));
+            fprintf(stderr, "Found %s: %u\n", reloc_entry_size_tag_name, w2h(section_hdr.sh_entsize));
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find %s dynamic tag\n", reloc_entry_size_tag_name);
@@ -1147,15 +1147,15 @@ enum ORCError parse_dynamic_relocation_section(
     switch ((err = find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, reloc_table_size_tag, &dynamic_tag))) {
         case ORC_SUCCESS:
             section_hdr.sh_size = dynamic_tag.d_un.d_val;
-            fprintf(stderr, "Found %s: %u\n", reloc_table_size_tag_name, be32toh(section_hdr.sh_size));
+            fprintf(stderr, "Found %s: %u\n", reloc_table_size_tag_name, w2h(section_hdr.sh_size));
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find %s dynamic tag\n", reloc_table_size_tag_name);
         default:
             return err;
     }
-    section_hdr.sh_flags = htobe32(SHF_ALLOC);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(section_hdr.sh_addr), &section_hdr.sh_offset)) != ORC_SUCCESS)
+    section_hdr.sh_flags = h2w(SHF_ALLOC);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, w2h(section_hdr.sh_addr), &section_hdr.sh_offset)) != ORC_SUCCESS)
         return err;
     if ((err = add_section_header(s_info, sh_name, &section_hdr, ".dynsym", NULL)) != ORC_SUCCESS)
         return err;
@@ -1193,15 +1193,15 @@ enum ORCError parse_section_header_csv(const char *csv_filepath, struct section_
         &header.sh_addralign
     )) == 10) 
     {
-        header.sh_type = htobe32(header.sh_type);
-        header.sh_addr = htobe32(header.sh_addr);
-        header.sh_offset = htobe32(header.sh_offset);
-        header.sh_size = htobe32(header.sh_size);
-        header.sh_entsize = htobe32(header.sh_entsize);
-        header.sh_flags = htobe32(header.sh_flags);
-        header.sh_link = htobe32(header.sh_link);
-        header.sh_info = htobe32(header.sh_info);
-        header.sh_addralign = htobe32(header.sh_addralign);
+        header.sh_type = h2w(header.sh_type);
+        header.sh_addr = h2w(header.sh_addr);
+        header.sh_offset = h2w(header.sh_offset);
+        header.sh_size = h2w(header.sh_size);
+        header.sh_entsize = h2w(header.sh_entsize);
+        header.sh_flags = h2w(header.sh_flags);
+        header.sh_link = h2w(header.sh_link);
+        header.sh_info = h2w(header.sh_info);
+        header.sh_addralign = h2w(header.sh_addralign);
 
         if ((err = add_section_header(s_info, section_name, &header, NULL, NULL)) != ORC_SUCCESS)
             goto cleanup;
@@ -1254,16 +1254,16 @@ enum ORCError parse_gnu_version_requirements_section(
             return err;
     }
 
-    section_header.sh_addralign = htobe32(sizeof(Elf32_Word));
-    section_header.sh_flags = htobe32(SHF_ALLOC);
-    section_header.sh_type = htobe32(SHT_GNU_verneed);
-    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(section_header.sh_addr), &section_header.sh_offset)) != ORC_SUCCESS)
+    section_header.sh_addralign = h2w(sizeof(Elf32_Word));
+    section_header.sh_flags = h2w(SHF_ALLOC);
+    section_header.sh_type = h2w(SHT_GNU_verneed);
+    if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, w2h(section_header.sh_addr), &section_header.sh_offset)) != ORC_SUCCESS)
         return err;
 
     switch (find_dynamic_tag(handle, dyn_seg_offset, dyn_seg_size, DT_VERNEEDNUM, &dynamic_tag)) {
         case ORC_SUCCESS: /* https://refspecs.linuxfoundation.org/LSB_3.0.0/LSB-PDA/LSB-PDA.junk/symversion.html */
             section_header.sh_info = dynamic_tag.d_un.d_val;
-            if ((err = parse_gnu_version_requirements_size(handle, be32toh(section_header.sh_offset), be32toh(dynamic_tag.d_un.d_val), &section_header.sh_size)) != ORC_SUCCESS)
+            if ((err = parse_gnu_version_requirements_size(handle, w2h(section_header.sh_offset), w2h(dynamic_tag.d_un.d_val), &section_header.sh_size)) != ORC_SUCCESS)
                 return err;
             break;
         case ORC_DYN_TAG_NOT_FOUND:
@@ -1281,7 +1281,7 @@ enum ORCError parse_gnu_version_requirements_section(
 
 enum ORCError find_section_header(struct section_info *s_info, const char *section_name, Elf32_Shdr **section_header) {
     for (struct csv_section_header *node = s_info->csv_headers; node != NULL; node = node->next) {
-        if (!strcmp(s_info->shstrtab + be32toh(node->header.sh_name), section_name)) {
+        if (!strcmp(s_info->shstrtab + w2h(node->header.sh_name), section_name)) {
             *section_header = &node->header;
             return ORC_SUCCESS;
         }
@@ -1327,7 +1327,7 @@ enum ORCError parse_dynsym_section_labels(FILE *handle, struct section_info *s_i
                 if (*head)
                     (*head)->prev = ptr;
 
-                while (ptr->next && be32toh(ptr->symbol.st_value) < be32toh(ptr->next->symbol.st_value))
+                while (ptr->next && w2h(ptr->symbol.st_value) < w2h(ptr->next->symbol.st_value))
                 {
                     if (ptr->prev != NULL)
                         ptr->prev->next = ptr->next;
@@ -1356,7 +1356,7 @@ enum ORCError parse_dynsym_section_labels(FILE *handle, struct section_info *s_i
     }
 
     for (ptr =  *head; ptr; ptr = ptr->next)
-        fprintf(stderr, "%hu: %s: 0x%x\n", be16toh(ptr->symbol.st_shndx), ptr->name, be32toh(ptr->symbol.st_value));
+        fprintf(stderr, "%hu: %s: 0x%x\n", s2h(ptr->symbol.st_shndx), ptr->name, w2h(ptr->symbol.st_value));
 
 cleanup:
     free(dynstr);
@@ -1397,74 +1397,74 @@ enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf3
                 of the (sdata) section, not the beginning
             */
             section_name = ".sdata";
-            sh.sh_addralign = htobe32(4);
-            sh.sh_flags = htobe32(SHF_ALLOC | SHF_WRITE | SHF_MIPS_GPREL);
-            sh.sh_type = htobe32(SHT_PROGBITS);
+            sh.sh_addralign = h2w(4);
+            sh.sh_flags = h2w(SHF_ALLOC | SHF_WRITE | SHF_MIPS_GPREL);
+            sh.sh_type = h2w(SHT_PROGBITS);
 
-            for (sh_ptr = s_info->csv_headers; sh_ptr->next != NULL && be32toh(sh_ptr->next->header.sh_addr) < be32toh(ptr->symbol.st_value); sh_ptr = sh_ptr->next);
+            for (sh_ptr = s_info->csv_headers; sh_ptr->next != NULL && w2h(sh_ptr->next->header.sh_addr) < w2h(ptr->symbol.st_value); sh_ptr = sh_ptr->next);
 
-            sh.sh_addr = htobe32(be32toh(sh_ptr->header.sh_addr) + be32toh(sh_ptr->header.sh_size));
-            sh.sh_size = htobe32(be32toh(ptr->symbol.st_value) - be32toh(sh.sh_addr));
+            sh.sh_addr = h2w(w2h(sh_ptr->header.sh_addr) + w2h(sh_ptr->header.sh_size));
+            sh.sh_size = h2w(w2h(ptr->symbol.st_value) - w2h(sh.sh_addr));
 
-            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(sh.sh_addr), &sh.sh_offset)) != ORC_SUCCESS)
+            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, w2h(sh.sh_addr), &sh.sh_offset)) != ORC_SUCCESS)
                 return err;
 
             ptr->next->prev = ptr->prev; /* remove _edata from the section label list so it is not used for section boundary calculations */
         }
         else {
             sh.sh_addr = ptr->symbol.st_value;
-            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, be32toh(sh.sh_addr), &sh.sh_offset)) != ORC_SUCCESS)
+            if ((err = calculate_file_offset(loadable_segs, num_loadable_segs, w2h(sh.sh_addr), &sh.sh_offset)) != ORC_SUCCESS)
                 return err;
-            if ((!strcmp(ptr->name, "_fbss") || !strcmp(ptr->name, "__bss_start")) && be32toh(sh.sh_addr) % 16)
-                sh.sh_addr = htobe32((16 - (be32toh(sh.sh_addr) % 16)) + be32toh(sh.sh_addr));
+            if ((!strcmp(ptr->name, "_fbss") || !strcmp(ptr->name, "__bss_start")) && w2h(sh.sh_addr) % 16)
+                sh.sh_addr = h2w((16 - (w2h(sh.sh_addr) % 16)) + w2h(sh.sh_addr));
 
             if (ptr->prev == NULL) {
-                find_vaddr_segment(loadable_segs, num_loadable_segs, be32toh(sh.sh_addr), &segment_idx);
-                sh.sh_size = htobe32((be32toh(loadable_segs[segment_idx].p_vaddr) + be32toh(loadable_segs[segment_idx].p_memsz)) - be32toh(sh.sh_addr));
+                find_vaddr_segment(loadable_segs, num_loadable_segs, w2h(sh.sh_addr), &segment_idx);
+                sh.sh_size = h2w((w2h(loadable_segs[segment_idx].p_vaddr) + w2h(loadable_segs[segment_idx].p_memsz)) - w2h(sh.sh_addr));
             }
             else {
-                if (ptr->prev->symbol.st_shndx == ptr->symbol.st_shndx || be16toh(ptr->prev->symbol.st_shndx) - be16toh(ptr->symbol.st_shndx) == 1) /* This section is directly adjacent to the previous section */
-                    sh.sh_size = htobe32(be32toh(ptr->prev->symbol.st_value) - be32toh(sh.sh_addr));
+                if (ptr->prev->symbol.st_shndx == ptr->symbol.st_shndx || s2h(ptr->prev->symbol.st_shndx) - s2h(ptr->symbol.st_shndx) == 1) /* This section is directly adjacent to the previous section */
+                    sh.sh_size = h2w(w2h(ptr->prev->symbol.st_value) - w2h(sh.sh_addr));
                 else {
-                    for (sh_ptr = s_info->csv_headers; sh_ptr->next && be32toh(sh.sh_addr) >= be32toh(sh_ptr->header.sh_addr); sh_ptr = sh_ptr->next);
-                    find_vaddr_segment(loadable_segs, num_loadable_segs, be32toh(sh.sh_addr), &segment_idx);
-                    find_vaddr_segment(loadable_segs, num_loadable_segs, be32toh(sh_ptr->header.sh_addr), &segment_idx2);
+                    for (sh_ptr = s_info->csv_headers; sh_ptr->next && w2h(sh.sh_addr) >= w2h(sh_ptr->header.sh_addr); sh_ptr = sh_ptr->next);
+                    find_vaddr_segment(loadable_segs, num_loadable_segs, w2h(sh.sh_addr), &segment_idx);
+                    find_vaddr_segment(loadable_segs, num_loadable_segs, w2h(sh_ptr->header.sh_addr), &segment_idx2);
 
-                    sh.sh_size = segment_idx == segment_idx2 ? htobe32(be32toh(sh_ptr->header.sh_addr) - be32toh(sh.sh_addr)): htobe32((be32toh(loadable_segs[segment_idx].p_vaddr) + be32toh(loadable_segs[segment_idx].p_memsz)) - be32toh(sh.sh_addr));
+                    sh.sh_size = segment_idx == segment_idx2 ? h2w(w2h(sh_ptr->header.sh_addr) - w2h(sh.sh_addr)): h2w((w2h(loadable_segs[segment_idx].p_vaddr) + w2h(loadable_segs[segment_idx].p_memsz)) - w2h(sh.sh_addr));
                 }
             }
 
             if (!strcmp(ptr->name, "_init")) {
                 section_name = ".init";
-                sh.sh_addralign = htobe32(4);
-                sh.sh_flags = htobe32(SHF_ALLOC | SHF_EXECINSTR);
-                sh.sh_type = htobe32(SHT_PROGBITS);
+                sh.sh_addralign = h2w(4);
+                sh.sh_flags = h2w(SHF_ALLOC | SHF_EXECINSTR);
+                sh.sh_type = h2w(SHT_PROGBITS);
             }
             else if (!strcmp(ptr->name, "_ftext")) {
                 section_name = ".text";
-                sh.sh_addralign = htobe32(16);
-                sh.sh_flags = htobe32(SHF_ALLOC | SHF_EXECINSTR);
-                sh.sh_type = htobe32(SHT_PROGBITS);
+                sh.sh_addralign = h2w(16);
+                sh.sh_flags = h2w(SHF_ALLOC | SHF_EXECINSTR);
+                sh.sh_type = h2w(SHT_PROGBITS);
             }
             else if (!strcmp(ptr->name, "_fini")) {
                 section_name = ".fini";
-                sh.sh_addralign = htobe32(4);
-                sh.sh_flags = htobe32(SHF_ALLOC | SHF_EXECINSTR);
-                sh.sh_type = htobe32(SHT_PROGBITS);
+                sh.sh_addralign = h2w(4);
+                sh.sh_flags = h2w(SHF_ALLOC | SHF_EXECINSTR);
+                sh.sh_type = h2w(SHT_PROGBITS);
 
             }
             else if (!strcmp(ptr->name, "_fdata")) {
                 section_name = ".data";
-                sh.sh_addralign = htobe32(16);
-                sh.sh_flags = htobe32(SHF_ALLOC | SHF_WRITE);
-                sh.sh_type = htobe32(SHT_PROGBITS);
+                sh.sh_addralign = h2w(16);
+                sh.sh_flags = h2w(SHF_ALLOC | SHF_WRITE);
+                sh.sh_type = h2w(SHT_PROGBITS);
             }
             else { /* bss */ 
                 found_bss = 1;
                 section_name = ".bss";
-                sh.sh_addralign = htobe32(16);
-                sh.sh_flags = htobe32(SHF_ALLOC | SHF_WRITE);
-                sh.sh_type = htobe32(SHT_NOBITS);
+                sh.sh_addralign = h2w(16);
+                sh.sh_flags = h2w(SHF_ALLOC | SHF_WRITE);
+                sh.sh_type = h2w(SHT_NOBITS);
             }
 
         }
@@ -1511,7 +1511,7 @@ enum ORCError parse_symtab_from_ghidra_csv(const char *sym_csv_filepath, struct 
         }
 
         index = 0;
-        for (ptr = s_info->csv_headers; ptr && !(sym.st_value >= be32toh(ptr->header.sh_addr) && sym.st_value + sym.st_size <= be32toh(ptr->header.sh_addr) + be32toh(ptr->header.sh_size)); ptr = ptr->next)
+        for (ptr = s_info->csv_headers; ptr && !(sym.st_value >= w2h(ptr->header.sh_addr) && sym.st_value + sym.st_size <= w2h(ptr->header.sh_addr) + w2h(ptr->header.sh_size)); ptr = ptr->next)
             index++;
         sym.st_shndx = ptr ? index : SHN_UNDEF;
 
@@ -1529,10 +1529,10 @@ enum ORCError parse_symtab_from_ghidra_csv(const char *sym_csv_filepath, struct 
 
         sym.st_other = ELF32_ST_VISIBILITY(STV_DEFAULT);
         sym.st_info = ELF32_ST_INFO(STB_GLOBAL, STT_FUNC);
-        sym.st_value = htobe32(sym.st_value);
-        sym.st_size = htobe32(sym.st_size);
-        sym.st_shndx = htobe16(sym.st_shndx);
-        sym.st_name = htobe32(sym.st_name);
+        sym.st_value = h2w(sym.st_value);
+        sym.st_size = h2w(sym.st_size);
+        sym.st_shndx = h2s(sym.st_shndx);
+        sym.st_name = h2w(sym.st_name);
 
         if (!(s_info->symtab = reallocarray(s_info->symtab, s_info->num_symbols + 1, sizeof(Elf32_Sym)))) {
             fprintf(stderr, "Failed to allocate memory for .symtab section: %s\n", strerror(errno));

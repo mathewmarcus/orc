@@ -86,7 +86,7 @@ int main(int argc, char *argv[])
 
     /* parse program header info */
     ph_num = be16toh(elf_hdr.e_phnum);
-    ph_off = be32toh(elf_hdr.e_phoff);
+    ph_off = w2h(elf_hdr.e_phoff);
     fprintf(stderr, "Found %hu program headers at offset %u\n", ph_num, ph_off);
 
     switch (find_program_headers(handle, ph_off, ph_num, PT_DYNAMIC, &dyn_seg, &phdr_count)) {
@@ -104,9 +104,9 @@ int main(int argc, char *argv[])
             goto err_exit;
     }
 
-    switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_MIPS_BASE_ADDRESS, &dynamic_tag))) {
+    switch ((err = find_dynamic_tag(handle, w2h(dyn_seg->p_offset), w2h(dyn_seg->p_filesz), DT_MIPS_BASE_ADDRESS, &dynamic_tag))) {
         case ORC_SUCCESS:
-            base_addr = be32toh(dynamic_tag.d_un.d_ptr);
+            base_addr = w2h(dynamic_tag.d_un.d_ptr);
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find MIPS_BASE_ADDRESS dynamic tag\n");
@@ -114,9 +114,9 @@ int main(int argc, char *argv[])
             return err;
     }
 
-    switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_SYMTAB, &dynamic_tag))) {
+    switch ((err = find_dynamic_tag(handle, w2h(dyn_seg->p_offset), w2h(dyn_seg->p_filesz), DT_SYMTAB, &dynamic_tag))) {
         case ORC_SUCCESS:
-            dynsym_shdr.sh_addr = be32toh(dynamic_tag.d_un.d_ptr);
+            dynsym_shdr.sh_addr = w2h(dynamic_tag.d_un.d_ptr);
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_SYMTAB dynamic tag\n");
@@ -125,20 +125,20 @@ int main(int argc, char *argv[])
     }
     if ((err = calculate_file_offset(loadable_segments, num_loadable_segments, dynsym_shdr.sh_addr, &dynsym_shdr.sh_offset)) != ORC_SUCCESS)
         return err;
-    dynsym_shdr.sh_offset = be32toh(dynsym_shdr.sh_offset);
+    dynsym_shdr.sh_offset = w2h(dynsym_shdr.sh_offset);
 
-    switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_SYMENT, &dynamic_tag))) {
+    switch ((err = find_dynamic_tag(handle, w2h(dyn_seg->p_offset), w2h(dyn_seg->p_filesz), DT_SYMENT, &dynamic_tag))) {
         case ORC_SUCCESS:
-            dynsym_shdr.sh_entsize = be32toh(dynamic_tag.d_un.d_val);
+            dynsym_shdr.sh_entsize = w2h(dynamic_tag.d_un.d_val);
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_SYMENT dynamic tag\n");
         default:
             return err;
     }
-    switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_MIPS_SYMTABNO, &dynamic_tag))) {
+    switch ((err = find_dynamic_tag(handle, w2h(dyn_seg->p_offset), w2h(dyn_seg->p_filesz), DT_MIPS_SYMTABNO, &dynamic_tag))) {
         case ORC_SUCCESS:
-            dynsym_shdr.sh_size = be32toh(dynamic_tag.d_un.d_val) * dynsym_shdr.sh_entsize;
+            dynsym_shdr.sh_size = w2h(dynamic_tag.d_un.d_val) * dynsym_shdr.sh_entsize;
             break;
         case ORC_DYN_TAG_NOT_FOUND:
             fprintf(stderr, "Failed to find DT_MIPS_SYMTABNO dynamic tag\n");
@@ -146,9 +146,9 @@ int main(int argc, char *argv[])
             return err;
     }
 
-    switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_MIPS_GOTSYM, &dynamic_tag))) {
+    switch ((err = find_dynamic_tag(handle, w2h(dyn_seg->p_offset), w2h(dyn_seg->p_filesz), DT_MIPS_GOTSYM, &dynamic_tag))) {
         case ORC_SUCCESS:
-            mips_gotsym = be32toh(dynamic_tag.d_un.d_val);
+            mips_gotsym = w2h(dynamic_tag.d_un.d_val);
             fprintf(stderr, "Found DT_MIPS_GOTSYM: %u\n", mips_gotsym);
             break;
         case ORC_DYN_TAG_NOT_FOUND:
@@ -158,9 +158,9 @@ int main(int argc, char *argv[])
             return err;
     }
 
-    switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_MIPS_LOCAL_GOTNO, &dynamic_tag))) {
+    switch ((err = find_dynamic_tag(handle, w2h(dyn_seg->p_offset), w2h(dyn_seg->p_filesz), DT_MIPS_LOCAL_GOTNO, &dynamic_tag))) {
         case ORC_SUCCESS:
-            mips_local_gotno = be32toh(dynamic_tag.d_un.d_val);
+            mips_local_gotno = w2h(dynamic_tag.d_un.d_val);
             fprintf(stderr, "Found DT_MIPS_LOCAL_GOTNO: 0x%x\n", mips_local_gotno);
             break;
         case ORC_DYN_TAG_NOT_FOUND:
@@ -171,19 +171,19 @@ int main(int argc, char *argv[])
     }
 
     if (IS_MIPS_NONPIC((&elf_hdr))) {
-        if ((err = parse_rel_plt_from_dyn_seg(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), &rel_plt_shdr)))
+        if ((err = parse_rel_plt_from_dyn_seg(handle, w2h(dyn_seg->p_offset), w2h(dyn_seg->p_filesz), &rel_plt_shdr)))
             return err;
         /* The above function will return big endian addresses */
-        rel_plt_shdr.sh_addr = be32toh(rel_plt_shdr.sh_addr);
-        rel_plt_shdr.sh_entsize = be32toh(rel_plt_shdr.sh_entsize);
-        rel_plt_shdr.sh_size = be32toh(rel_plt_shdr.sh_size);
+        rel_plt_shdr.sh_addr = w2h(rel_plt_shdr.sh_addr);
+        rel_plt_shdr.sh_entsize = w2h(rel_plt_shdr.sh_entsize);
+        rel_plt_shdr.sh_size = w2h(rel_plt_shdr.sh_size);
         if ((err = calculate_file_offset(loadable_segments, num_loadable_segments, rel_plt_shdr.sh_addr, &rel_plt_shdr.sh_offset)) != ORC_SUCCESS)
             return err;
-        rel_plt_shdr.sh_offset = be32toh(rel_plt_shdr.sh_offset);
+        rel_plt_shdr.sh_offset = w2h(rel_plt_shdr.sh_offset);
 
-        switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_MIPS_PLTGOT, &dynamic_tag))) {
+        switch ((err = find_dynamic_tag(handle, w2h(dyn_seg->p_offset), w2h(dyn_seg->p_filesz), DT_MIPS_PLTGOT, &dynamic_tag))) {
             case ORC_SUCCESS:
-                got_plt_addr = be32toh(dynamic_tag.d_un.d_ptr);
+                got_plt_addr = w2h(dynamic_tag.d_un.d_ptr);
                 fprintf(stderr, "Found DT_MIPS_PLTGOT: 0x%x\n", got_plt_addr);
                 break;
             case ORC_DYN_TAG_NOT_FOUND:
@@ -192,9 +192,9 @@ int main(int argc, char *argv[])
                 return err;
         }
     }
-    switch ((err = find_dynamic_tag(handle, be32toh(dyn_seg->p_offset), be32toh(dyn_seg->p_filesz), DT_PLTGOT, &dynamic_tag))) {
+    switch ((err = find_dynamic_tag(handle, w2h(dyn_seg->p_offset), w2h(dyn_seg->p_filesz), DT_PLTGOT, &dynamic_tag))) {
         case ORC_SUCCESS:
-            got_addr = be32toh(dynamic_tag.d_un.d_ptr);
+            got_addr = w2h(dynamic_tag.d_un.d_ptr);
             fprintf(stderr, "Found DT_PLTGOT: 0x%x\n", got_addr);
             break;
         case ORC_DYN_TAG_NOT_FOUND:
@@ -221,14 +221,14 @@ int main(int argc, char *argv[])
                         func_ptr_offset = got_plt_addr + (sizeof(Elf32_Addr) * (rel_plt_idx + 2)),
                         as per the MIPS non PIC ABI "Procedure Linkage Table" section
                     */
-                    func_ptr_offset = be32toh(r_mips_jump_slot_rel.r_offset);
+                    func_ptr_offset = w2h(r_mips_jump_slot_rel.r_offset);
                 }
                 else {
                     /*
                         this is a dynamic symbol that is NOT GOT mapped (see Symbols section in MIPS-ABI.pdf)
                         I honestly have no idea why this is a thing, the MIPS-ABI.pdf does not make it clear.
                     */
-                    func_offset = be32toh(dyn_sym.st_value);
+                    func_offset = w2h(dyn_sym.st_value);
                 }
             }
             else {
