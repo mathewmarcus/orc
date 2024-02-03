@@ -1521,13 +1521,25 @@ enum ORCError parse_symtab_from_ghidra_csv(const char *sym_csv_filepath, struct 
 
     for (int line_num = 0; (line_len = getline(&lineptr, &buflen, sym_file)) != -1; line_num++)
     {
-        if (line_num == 0)
-            continue; /* skip CSV column headers */
+        /* 
+            TODO: 
+            add initial sym
+                0: 00000000     0 NOTYPE  LOCAL  DEFAULT  UND
+        */
+        if (line_num == 0) {
+            sym_name = "";
+            sym.st_value = 0;
+            sym.st_size = 0;
+            sym.st_info = ELF32_ST_INFO(STB_LOCAL, STT_NOTYPE);
+        }
+        else {
+            sym.st_info = ELF32_ST_INFO(STB_GLOBAL, STT_FUNC);
 
-        if ((num_matches = sscanf(lineptr, FUNC_CSV_FORMAT_STR, &sym_name, &sym.st_value, &sym.st_size)) != 3) {
-            fprintf(stderr, "%s is incorrectly formatted, only matched %i of 3 expected columns in line: %s\n", sym_csv_filepath, num_matches, lineptr);
-            err = ORC_SECTION_HEADER_CSV_FORMAT_ERR;
-            goto cleanup;
+            if ((num_matches = sscanf(lineptr, FUNC_CSV_FORMAT_STR, &sym_name, &sym.st_value, &sym.st_size)) != 3) {
+                fprintf(stderr, "%s is incorrectly formatted, only matched %i of 3 expected columns in line: %s\n", sym_csv_filepath, num_matches, lineptr);
+                err = ORC_SECTION_HEADER_CSV_FORMAT_ERR;
+                goto cleanup;
+            }
         }
 
         index = 0;
@@ -1543,12 +1555,12 @@ enum ORCError parse_symtab_from_ghidra_csv(const char *sym_csv_filepath, struct 
             goto cleanup;
         }
         strcpy(s_info->strtab + s_info->strtab_len, sym_name);
-        free(sym_name);
+        if (line_num > 0)
+            free(sym_name);
         sym.st_name = s_info->strtab_len;
         s_info->strtab_len += sym_name_len;
 
         sym.st_other = ELF32_ST_VISIBILITY(STV_DEFAULT);
-        sym.st_info = ELF32_ST_INFO(STB_GLOBAL, STT_FUNC);
         sym.st_value = h2w(sym.st_value);
         sym.st_size = h2w(sym.st_size);
         sym.st_shndx = h2s(sym.st_shndx);
