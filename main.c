@@ -112,6 +112,7 @@ enum ORCError parse_gnu_version_requirements_section(
 enum ORCError build_section_headers(struct section_info *s_info);
 enum ORCError parse_sh_from_dynsym(FILE *handle, Elf32_Phdr *loadable_segs, Elf32_Half num_loadable_segs, struct section_info *s_info);
 enum ORCError parse_symtab_from_ghidra_csv(const char *sym_csv_filepath, struct section_info *s_info);
+enum ORCError read_section_headers(FILE *handle, Elf32_Ehdr *elf_header, struct section_info *s_info, uint8_t skip_syms, long *section_end);
     
 static struct dynsym_section_label dynsym_section_labels[NUM_DYNSYM_SECTION_LABELS] = {
     {
@@ -185,6 +186,7 @@ uint32_t (*w2h)(uint32_t) = le322h;
 uint16_t (*h2s)(uint16_t) = h2le16;
 uint16_t (*s2h)(uint16_t) = le162h;
 
+
 int main(int argc, char *argv[])
 {
     FILE *handle;
@@ -196,7 +198,7 @@ int main(int argc, char *argv[])
     int ret, opt;
     enum ORCError err;
     struct section_info s_info = { 0 };
-    char *csv_file = NULL, *ghidra_symbols_csv = NULL, *ghidra_functions_csv = NULL;
+    char *csv_file = NULL, *ghidra_symbols_csv = NULL;
     struct csv_section_header *hdr_ptr;
 
     opterr = 0;
@@ -248,155 +250,161 @@ int main(int argc, char *argv[])
         s2h = be162h;
     }
 
-    if (!IS_SUPPORTED_ARCH((&elf_header))) {
-        fprintf(stderr, "Currently only 32 bit big-endian MIPS binaries are supported\n");
+    if (!(elf_header.e_ident[EI_CLASS] & ELFCLASS32)) {
+        fprintf(stderr, "Currently only 32 bit binaries are supported\n");
         goto err_exit;
     }
 
-    if (elf_header.e_shoff || elf_header.e_shnum) {
+    if (elf_header.e_shnum || elf_header.e_shoff) {
         fprintf(stderr, "%s already contains %hu section headers at offset 0x%x\n", argv[optind], s2h(elf_header.e_shnum), w2h(elf_header.e_shoff));
-        goto err_exit;
-    }
-
-    if (add_section_header(&s_info, "", &null_section, NULL, NULL) != ORC_SUCCESS)
-       goto err_exit;
-
-    /* parse program header info */
-    Elf32_Half ph_num = s2h(elf_header.e_phnum);
-    Elf32_Off ph_off = w2h(elf_header.e_phoff);
-    fprintf(stderr, "Found %hu program headers at offset %u\n", ph_num, ph_off);
-
-    switch (find_program_headers(handle, ph_off, ph_num, PT_INTERP, &seg, &phdr_count)) {
-        case ORC_SUCCESS:
-            interp.sh_addr = seg->p_vaddr;
-            interp.sh_addralign = seg->p_align;
-            if (seg->p_flags & h2w(PF_R))
-                interp.sh_flags |= h2w(SHF_ALLOC);
-            if (seg->p_flags & h2w(PF_W))
-                interp.sh_flags |= h2w(SHF_WRITE);
-            if (seg->p_flags & h2w(PF_X))
-                interp.sh_flags |= h2w(SHF_EXECINSTR);
-            interp.sh_offset = seg->p_offset;
-            interp.sh_size = seg->p_filesz;
-            interp.sh_type = h2w(SHT_PROGBITS);
-            if (add_section_header(&s_info, ".interp", &interp, NULL, NULL) != ORC_SUCCESS)
-                goto err_exit;
-        case ORC_PHDR_NOT_FOUND:
-            break;
-        default:
+        if (read_section_headers(handle, &elf_header, &s_info, ghidra_symbols_csv != NULL, &offset) != ORC_SUCCESS)
             goto err_exit;
-    }
-
-    switch (find_program_headers(handle, ph_off, ph_num, PT_MIPS_ABIFLAGS, &seg, &phdr_count)) {
-        case ORC_SUCCESS:
-            mips_abiflags.sh_addr = seg->p_vaddr;
-            mips_abiflags.sh_addralign = seg->p_align;
-            if (seg->p_flags & h2w(PF_R))
-                mips_abiflags.sh_flags |= h2w(SHF_ALLOC);
-            if (seg->p_flags & h2w(PF_W))
-                mips_abiflags.sh_flags |= h2w(SHF_WRITE);
-            if (seg->p_flags & h2w(PF_X))
-                mips_abiflags.sh_flags |= h2w(SHF_EXECINSTR);
-            mips_abiflags.sh_offset = seg->p_offset;
-            mips_abiflags.sh_size = seg->p_filesz;
-            mips_abiflags.sh_type = h2w(SHT_MIPS_ABIFLAGS);
-            if (add_section_header(&s_info, ".MIPS.abiflags", &mips_abiflags, NULL, NULL) != ORC_SUCCESS)
-                goto err_exit;
-        case ORC_PHDR_NOT_FOUND:
-            break;
-        default:
-            goto err_exit;
-    }
-
-    switch (find_program_headers(handle, ph_off, ph_num, PT_MIPS_REGINFO, &seg, &phdr_count)) {
-        case ORC_SUCCESS:
-            reginfo.sh_addr = seg->p_vaddr;
-            reginfo.sh_addralign = seg->p_align;
-            if (seg->p_flags & h2w(PF_R))
-                reginfo.sh_flags |= h2w(SHF_ALLOC);
-            if (seg->p_flags & h2w(PF_W))
-                reginfo.sh_flags |= h2w(SHF_WRITE);
-            if (seg->p_flags & h2w(PF_X))
-                reginfo.sh_flags |= h2w(SHF_EXECINSTR);
-            reginfo.sh_offset = seg->p_offset;
-            reginfo.sh_size = seg->p_filesz;
-            reginfo.sh_type = h2w(SHT_MIPS_REGINFO);
-            if (add_section_header(&s_info, ".reginfo", &reginfo, NULL, NULL) != ORC_SUCCESS)
-                goto err_exit;
-        case ORC_PHDR_NOT_FOUND:
-            break;
-        default:
-            goto err_exit;
-    }
-
-    switch (find_program_headers(handle, ph_off, ph_num, PT_GNU_EH_FRAME, &seg, &phdr_count)) {
-        case ORC_SUCCESS:
-            sh.sh_addr = seg->p_vaddr;
-            sh.sh_addralign = seg->p_align;
-            if (seg->p_flags & h2w(PF_R))
-                sh.sh_flags |= h2w(SHF_ALLOC);
-            if (seg->p_flags & h2w(PF_W))
-                sh.sh_flags |= h2w(SHF_WRITE);
-            if (seg->p_flags & h2w(PF_X))
-                sh.sh_flags |= h2w(SHF_EXECINSTR);
-            sh.sh_offset = seg->p_offset;
-            sh.sh_size = seg->p_filesz;
-            sh.sh_type = h2w(SHT_PROGBITS);
-            if (add_section_header(&s_info, ".eh_frame_hdr", &sh, NULL, NULL) != ORC_SUCCESS)
-                goto err_exit;
-        case ORC_PHDR_NOT_FOUND:
-            break;
-        default:
-            goto err_exit;
-    }
-
-    switch (find_program_headers(handle, ph_off, ph_num, PT_LOAD, &loadable_segments, &num_loadable_segments)) {
-        case ORC_SUCCESS:
-        case ORC_PHDR_NOT_FOUND:
-            break;
-        default:
-            goto err_exit;
-    }
-
-    switch (find_program_headers(handle, ph_off, ph_num, PT_DYNAMIC, &seg, &phdr_count)) {
-        case ORC_SUCCESS:
-            if ((err = parse_dynamic_segment(handle, seg, loadable_segments, num_loadable_segments, &s_info, &elf_header)) == ORC_CRITICIAL)
-                goto err_exit;
-        case ORC_PHDR_NOT_FOUND:
-            break;
-        default:
-            goto err_exit;
-    }
-
-    if (csv_file)
-        if (parse_section_header_csv(csv_file, &s_info) != ORC_SUCCESS)
-            goto err_exit;
-
-    if ((err = parse_sh_from_dynsym(handle, loadable_segments, num_loadable_segments, &s_info)) != ORC_SUCCESS && err != ORC_SYM_NOT_FOUND)
-        goto err_exit;
-
-
-    for (hdr_ptr = s_info.csv_headers; hdr_ptr->next; hdr_ptr = hdr_ptr->next) {
-        fprintf(stderr, "%s: 0x%x : 0x%x\n", hdr_ptr->name, w2h(hdr_ptr->header.sh_addr), w2h(hdr_ptr->header.sh_size));
-    }
-    fprintf(stderr, "%s: 0x%x : 0x%x\n", hdr_ptr->name, w2h(hdr_ptr->header.sh_addr), w2h(hdr_ptr->header.sh_size));
-
-
-    if (fseek(handle, 0L, SEEK_END) == -1 || (offset = ftell(handle)) == -1)
-    {
-        fprintf(stderr, "Failed to obtain file size of %s: %s\n", argv[optind], strerror(errno));
-        fclose(handle);
-        return 1;
-    }
-    fprintf(stderr, "File %s size: 0x%lx bytes\n", argv[optind], offset);
-
-    Elf32_Word section_end = w2h(hdr_ptr->header.sh_type) == SHT_NOBITS ? w2h(hdr_ptr->header.sh_offset): w2h(hdr_ptr->header.sh_offset) + w2h(hdr_ptr->header.sh_size);
-    if (section_end > offset) {
-        if (fseek(handle, section_end-offset, SEEK_CUR) == -1) {
-            fprintf(stderr, "Failed to seek to section header end offset at 0x%x in %s: %s\n", section_end, argv[optind], strerror(errno));
+        if (fseek(handle, offset, SEEK_SET) == -1)
+        {
+            fprintf(stderr, "Failed to seek to offset at %li in %s: %s\n", offset, argv[optind], strerror(errno));
             goto err_exit;
         }
-        offset = section_end;
+    }
+    else {
+        if (add_section_header(&s_info, "", &null_section, NULL, NULL) != ORC_SUCCESS)
+        goto err_exit;
+
+        /* parse program header info */
+        Elf32_Half ph_num = s2h(elf_header.e_phnum);
+        Elf32_Off ph_off = w2h(elf_header.e_phoff);
+        fprintf(stderr, "Found %hu program headers at offset %u\n", ph_num, ph_off);
+
+        switch (find_program_headers(handle, ph_off, ph_num, PT_INTERP, &seg, &phdr_count)) {
+            case ORC_SUCCESS:
+                interp.sh_addr = seg->p_vaddr;
+                interp.sh_addralign = seg->p_align;
+                if (seg->p_flags & h2w(PF_R))
+                    interp.sh_flags |= h2w(SHF_ALLOC);
+                if (seg->p_flags & h2w(PF_W))
+                    interp.sh_flags |= h2w(SHF_WRITE);
+                if (seg->p_flags & h2w(PF_X))
+                    interp.sh_flags |= h2w(SHF_EXECINSTR);
+                interp.sh_offset = seg->p_offset;
+                interp.sh_size = seg->p_filesz;
+                interp.sh_type = h2w(SHT_PROGBITS);
+                if (add_section_header(&s_info, ".interp", &interp, NULL, NULL) != ORC_SUCCESS)
+                    goto err_exit;
+            case ORC_PHDR_NOT_FOUND:
+                break;
+            default:
+                goto err_exit;
+        }
+
+        switch (find_program_headers(handle, ph_off, ph_num, PT_MIPS_ABIFLAGS, &seg, &phdr_count)) {
+            case ORC_SUCCESS:
+                mips_abiflags.sh_addr = seg->p_vaddr;
+                mips_abiflags.sh_addralign = seg->p_align;
+                if (seg->p_flags & h2w(PF_R))
+                    mips_abiflags.sh_flags |= h2w(SHF_ALLOC);
+                if (seg->p_flags & h2w(PF_W))
+                    mips_abiflags.sh_flags |= h2w(SHF_WRITE);
+                if (seg->p_flags & h2w(PF_X))
+                    mips_abiflags.sh_flags |= h2w(SHF_EXECINSTR);
+                mips_abiflags.sh_offset = seg->p_offset;
+                mips_abiflags.sh_size = seg->p_filesz;
+                mips_abiflags.sh_type = h2w(SHT_MIPS_ABIFLAGS);
+                if (add_section_header(&s_info, ".MIPS.abiflags", &mips_abiflags, NULL, NULL) != ORC_SUCCESS)
+                    goto err_exit;
+            case ORC_PHDR_NOT_FOUND:
+                break;
+            default:
+                goto err_exit;
+        }
+
+        switch (find_program_headers(handle, ph_off, ph_num, PT_MIPS_REGINFO, &seg, &phdr_count)) {
+            case ORC_SUCCESS:
+                reginfo.sh_addr = seg->p_vaddr;
+                reginfo.sh_addralign = seg->p_align;
+                if (seg->p_flags & h2w(PF_R))
+                    reginfo.sh_flags |= h2w(SHF_ALLOC);
+                if (seg->p_flags & h2w(PF_W))
+                    reginfo.sh_flags |= h2w(SHF_WRITE);
+                if (seg->p_flags & h2w(PF_X))
+                    reginfo.sh_flags |= h2w(SHF_EXECINSTR);
+                reginfo.sh_offset = seg->p_offset;
+                reginfo.sh_size = seg->p_filesz;
+                reginfo.sh_type = h2w(SHT_MIPS_REGINFO);
+                if (add_section_header(&s_info, ".reginfo", &reginfo, NULL, NULL) != ORC_SUCCESS)
+                    goto err_exit;
+            case ORC_PHDR_NOT_FOUND:
+                break;
+            default:
+                goto err_exit;
+        }
+
+        switch (find_program_headers(handle, ph_off, ph_num, PT_GNU_EH_FRAME, &seg, &phdr_count)) {
+            case ORC_SUCCESS:
+                sh.sh_addr = seg->p_vaddr;
+                sh.sh_addralign = seg->p_align;
+                if (seg->p_flags & h2w(PF_R))
+                    sh.sh_flags |= h2w(SHF_ALLOC);
+                if (seg->p_flags & h2w(PF_W))
+                    sh.sh_flags |= h2w(SHF_WRITE);
+                if (seg->p_flags & h2w(PF_X))
+                    sh.sh_flags |= h2w(SHF_EXECINSTR);
+                sh.sh_offset = seg->p_offset;
+                sh.sh_size = seg->p_filesz;
+                sh.sh_type = h2w(SHT_PROGBITS);
+                if (add_section_header(&s_info, ".eh_frame_hdr", &sh, NULL, NULL) != ORC_SUCCESS)
+                    goto err_exit;
+            case ORC_PHDR_NOT_FOUND:
+                break;
+            default:
+                goto err_exit;
+        }
+
+        switch (find_program_headers(handle, ph_off, ph_num, PT_LOAD, &loadable_segments, &num_loadable_segments)) {
+            case ORC_SUCCESS:
+            case ORC_PHDR_NOT_FOUND:
+                break;
+            default:
+                goto err_exit;
+        }
+
+        switch (find_program_headers(handle, ph_off, ph_num, PT_DYNAMIC, &seg, &phdr_count)) {
+            case ORC_SUCCESS:
+                if ((err = parse_dynamic_segment(handle, seg, loadable_segments, num_loadable_segments, &s_info, &elf_header)) == ORC_CRITICIAL)
+                    goto err_exit;
+            case ORC_PHDR_NOT_FOUND:
+                break;
+            default:
+                goto err_exit;
+        }
+
+        if (csv_file)
+            if (parse_section_header_csv(csv_file, &s_info) != ORC_SUCCESS)
+                goto err_exit;
+
+        if ((err = parse_sh_from_dynsym(handle, loadable_segments, num_loadable_segments, &s_info)) != ORC_SUCCESS && err != ORC_SYM_NOT_FOUND)
+            goto err_exit;
+
+
+        if (fseek(handle, 0L, SEEK_END) == -1 || (offset = ftell(handle)) == -1)
+        {
+            fprintf(stderr, "Failed to obtain file size of %s: %s\n", argv[optind], strerror(errno));
+            fclose(handle);
+            return 1;
+        }
+        fprintf(stderr, "File %s size: 0x%lx bytes\n", argv[optind], offset);
+
+        for (hdr_ptr = s_info.csv_headers; hdr_ptr->next; hdr_ptr = hdr_ptr->next) {
+            fprintf(stderr, "%s: 0x%x : 0x%x\n", hdr_ptr->name, w2h(hdr_ptr->header.sh_addr), w2h(hdr_ptr->header.sh_size));
+        }
+        fprintf(stderr, "%s: 0x%x : 0x%x\n", hdr_ptr->name, w2h(hdr_ptr->header.sh_addr), w2h(hdr_ptr->header.sh_size));
+
+        Elf32_Word section_end = w2h(hdr_ptr->header.sh_type) == SHT_NOBITS ? w2h(hdr_ptr->header.sh_offset): w2h(hdr_ptr->header.sh_offset) + w2h(hdr_ptr->header.sh_size);
+        if (section_end > offset) {
+            if (fseek(handle, section_end-offset, SEEK_CUR) == -1) {
+                fprintf(stderr, "Failed to seek to section header end offset at 0x%x in %s: %s\n", section_end, argv[optind], strerror(errno));
+                goto err_exit;
+            }
+            offset = section_end;
+        }
     }
 
     if (ghidra_symbols_csv) {
@@ -458,7 +466,6 @@ int main(int argc, char *argv[])
         }
     }
     fprintf(stderr, ".shstrtab offset: 0x%lx\n", offset);
-    fprintf(stderr, "End of last section: 0x%x\n", section_end);
 
 
     /*
@@ -619,26 +626,38 @@ int find_referenced_section(struct section_info *s_info, const char *name) {
 enum ORCError build_section_headers(struct section_info *s_info) {
     Elf32_Shdr *ptr;
     int idx;
+    Elf32_Half num_csv_headers = 0, num_existing_headers = s_info->num_headers;
+
     for (struct csv_section_header *node = s_info->csv_headers; node != NULL; node = node->next) {
         if (node->info) {
             if ((idx = find_referenced_section(s_info, node->info)) == -1)
                 fprintf(stderr, "Failed to find info section %s for section %s\n", node->info, node->name);
             else
-                node->header.sh_info = h2w(idx);
+                node->header.sh_info = h2w(idx + num_existing_headers);
 
         }
         if (node->link) {
             if ((idx = find_referenced_section(s_info, node->link)) == -1)
                 fprintf(stderr, "Failed to find link section %s for section %s\n", node->info, node->name);
             else
-                node->header.sh_link = h2w(idx);
+                node->header.sh_link = h2w(idx + num_existing_headers);
         }
         s_info->num_headers++;
+        num_csv_headers++;
     }
 
-    if (!(ptr = s_info->headers = calloc(s_info->num_headers, sizeof(Elf32_Shdr)))) {
-        fprintf(stderr, "Failed to allocate space for section headers: %s\n", strerror(errno));
-        return ORC_CRITICIAL;
+    if (s_info->headers) {
+        if (!(s_info->headers = reallocarray(s_info->headers, s_info->num_headers, sizeof(Elf32_Shdr)))) {
+            fprintf(stderr, "Failed to re-allocate space for section headers: %s\n", strerror(errno));
+            return ORC_CRITICIAL;
+        }
+        ptr = s_info->headers + (s_info->num_headers - num_csv_headers);
+    }
+    else {
+        if (!(ptr = s_info->headers = calloc(s_info->num_headers, sizeof(Elf32_Shdr)))) {
+            fprintf(stderr, "Failed to allocate space for section headers: %s\n", strerror(errno));
+            return ORC_CRITICIAL;
+        }
     }
 
     for (struct csv_section_header *node = s_info->csv_headers; node != NULL; node = node->next)
@@ -1550,5 +1569,90 @@ cleanup:
     free(lineptr);
     fclose(sym_file);
 
+    return err;
+}
+
+
+enum ORCError read_section_headers(FILE *handle, Elf32_Ehdr *elf_header, struct section_info *s_info, uint8_t skip_syms, long *section_end) {
+    enum ORCError err;
+    Elf32_Shdr header, *ptr;
+    Elf32_Off offset;
+    Elf32_Half sh_num = s2h(elf_header->e_shnum);
+    Elf32_Off sh_off = w2h(elf_header->e_shoff);
+    Elf32_Half sh_idx = s2h(elf_header->e_shstrndx);
+    char *shstrtab = NULL, *sh_name;
+
+    /* Don't include the shstrtab header, because that will be amended and added later */
+    if (!(ptr = s_info->headers = calloc(sh_num - 1, sizeof(Elf32_Shdr)))) {
+        fprintf(stderr, "Failed to allocate space for section headers: %s\n", strerror(errno));
+        return ORC_CRITICIAL;
+    }
+
+    while (sh_idx < sh_num) {
+        offset = sh_off + (sh_idx * sizeof(Elf32_Shdr));
+        if (fseek(handle, offset, SEEK_SET) == -1) {
+            fprintf(stderr, "Failed to seek to section header offset 0x%xu: %s\n", offset, strerror(errno));
+            err = ORC_FILE_IO_ERR;
+            goto exit;
+        }
+
+        if (fread(&header, sizeof(Elf32_Shdr), 1, handle) != 1)
+        {
+            if (ferror(handle)) {
+                fprintf(stderr, "Failed to read existing section header at offset 0x%x\n", offset);
+                err = ORC_FILE_IO_ERR;
+                goto exit;
+            }
+            fprintf(stderr, "Invalid section headers\n");
+            err = ORC_INVALID_ELF;
+            goto exit;
+        }
+
+        if (sh_idx == s2h(elf_header->e_shstrndx)) {
+            if (shstrtab)
+                break;
+
+            if (!(shstrtab = malloc(w2h(header.sh_size)))) {
+                err = ORC_CRITICIAL;
+                goto exit;
+            }
+
+            offset = w2h(header.sh_offset);
+            if (fseek(handle, offset, SEEK_SET) == -1) {
+                fprintf(stderr, "Failed to seek to existing shstrtab offset 0x%xu: %s\n", offset, strerror(errno));
+                err = ORC_FILE_IO_ERR;
+                goto exit;
+            }
+
+            if (fread(shstrtab, w2h(header.sh_size), 1, handle) != 1)
+            {
+                if (ferror(handle)) {
+                    fprintf(stderr, "Failed to read existing shstrtab at offset 0x%x\n", offset);
+                    err = ORC_FILE_IO_ERR;
+                    goto exit;
+                }
+                fprintf(stderr, "Invalid section headers\n");
+                err = ORC_INVALID_ELF;
+                goto exit;
+            }
+            sh_idx = 0;
+        }
+        else if (skip_syms && (strcmp(".symtab", shstrtab + w2h(header.sh_name)) == 0 || strcmp(".strtab", shstrtab + w2h(header.sh_name)) == 0))
+            sh_idx++;
+        else {
+            add_shstrtab_entry(s_info, shstrtab + w2h(header.sh_name), &header);
+            memcpy(ptr++, &header, sizeof(Elf32_Shdr));
+            sh_idx++;
+            s_info->num_headers++;
+            *section_end = w2h(header.sh_type) == SHT_NOBITS ? w2h(header.sh_offset): w2h(header.sh_offset) + w2h(header.sh_size);
+        }
+
+    }
+    fprintf(stderr, "Read %hu existing section headers!\n", s_info->num_headers);
+
+    err = ORC_SUCCESS;
+
+exit:
+    free(shstrtab);
     return err;
 }

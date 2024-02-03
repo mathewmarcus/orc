@@ -5,7 +5,6 @@
 #include <elf.h>
 #include <endian.h>
 
-#define IS_SUPPORTED_ARCH(elf_hdr) (elf_hdr->e_ident[EI_CLASS] & ELFCLASS32 && elf_hdr->e_ident[EI_DATA] & ELFDATA2MSB && s2h(elf_hdr->e_machine) == EM_MIPS)
 #define IS_MIPS_NONPIC(elf_hdr) (elf_hdr->e_ident[EI_ABIVERSION] == 0x1 && (h2w(elf_hdr->e_flags) & EF_MIPS_CPIC) && !(h2w(elf_hdr->e_flags) & EF_MIPS_PIC))
 
 enum ORCError {
